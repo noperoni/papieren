@@ -1,0 +1,16 @@
+{
+  "data": {
+    "user_result_by_screen_name": {
+      "result": {
+        "__typename": "User",
+        "rest_id": "1003",
+        "core": { "screen_name": "region_example" },
+        "about_profile": {
+          "account_based_in": "South Asia",
+          "location_accurate": false,
+          "source": "South Asia App Store"
+        }
+      }
+    }
+  }
+}

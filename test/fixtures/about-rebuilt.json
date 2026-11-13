@@ -1,0 +1,18 @@
+{
+  "data": {
+    "user_result_by_screen_name": {
+      "result": {
+        "__typename": "User",
+        "id": "VXNlcjoxMDAy",
+        "rest_id": "1002",
+        "core": { "screen_name": "eu_example", "name": "EU" },
+        "about_profile": {
+          "account_based_in": "Europe",
+          "location_accurate": true,
+          "source": "Web",
+          "username_changes": { "count": "2" }
+        }
+      }
+    }
+  }
+}

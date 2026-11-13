@@ -1,0 +1,27 @@
+{
+  "data": { "home": { "home_timeline_urt": { "instructions": [ { "type": "TimelineAddEntries", "entries": [
+    { "entryId": "tweet-2001", "content": { "itemContent": { "tweet_results": { "result": {
+      "__typename": "Tweet", "rest_id": "2001",
+      "core": { "user_results": { "result": { "__typename": "User", "rest_id": "1001",
+        "core": { "screen_name": "ivan_example" }, "legacy": { "description": "plain tweet author" } } } },
+      "legacy": { "full_text": "plain" } } } } } },
+    { "entryId": "tweet-2002", "content": { "itemContent": { "tweet_results": { "result": {
+      "__typename": "TweetWithVisibilityResults",
+      "tweet": { "__typename": "Tweet", "rest_id": "2002",
+        "core": { "user_results": { "result": { "__typename": "User", "rest_id": "1002",
+          "core": { "screen_name": "marie_example" }, "legacy": { "description": "" } } } },
+        "legacy": { "full_text": "visibility-wrapped" } } } } } } },
+    { "entryId": "tweet-2003", "content": { "itemContent": { "tweet_results": { "result": {
+      "__typename": "Tweet", "rest_id": "2003",
+      "core": { "user_results": { "result": { "__typename": "User", "rest_id": "1003",
+        "core": { "screen_name": "joe_example" } } } },
+      "legacy": { "full_text": "RT", "retweeted_status_result": { "result": {
+        "__typename": "TweetWithVisibilityResults",
+        "tweet": { "__typename": "Tweet", "rest_id": "2004",
+          "core": { "user_results": { "result": { "__typename": "User", "rest_id": "1004",
+            "core": { "screen_name": "nadia_example" } } } },
+          "legacy": { "full_text": "original" } } } } } } } } } },
+    { "entryId": "tweet-2005", "content": { "itemContent": { "tweet_results": { "result": {
+      "__typename": "TweetTombstone" } } } } }
+  ] } ] } } }
+}

@@ -1,0 +1,18 @@
+{
+  "data": {
+    "user_result_by_screen_name": {
+      "result": {
+        "__typename": "User",
+        "rest_id": "1001",
+        "core": { "screen_name": "Ivan_Example", "name": "Ivan" },
+        "about_profile": {
+          "account_based_in": "Russia",
+          "location_accurate": true,
+          "source": "Russia App Store",
+          "learn_more_url": "https://help.x.com/example",
+          "username_changes": { "count": "0" }
+        }
+      }
+    }
+  }
+}
