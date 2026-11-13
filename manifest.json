@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Papieren",
+  "version": "0.1.0",
+  "description": "Hides x.com posts by the author's account country. Hide only: it never blocks, mutes or reports.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://x.com/*", "https://api.x.com/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*"],
+      "js": ["src/page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*"],
+      "js": ["src/lib/rules.js", "src/content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Papieren",
+    "default_popup": "popup/popup.html"
+  }
+}
