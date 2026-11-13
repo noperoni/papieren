@@ -18,7 +18,7 @@
     },
     {
       "matches": ["https://x.com/*"],
-      "js": ["src/lib/rules.js", "src/lib/x-parse.js", "src/content.js"],
+      "js": ["src/lib/settings.js", "src/lib/rules.js", "src/lib/x-parse.js", "src/lib/variants.js", "src/content.js"],
       "run_at": "document_start"
     }
   ],
