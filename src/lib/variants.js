@@ -5,6 +5,7 @@
   const PERMALINK = new RegExp(`^(?:https://(?:x|twitter)\\.com)?/(${HANDLE})/status/(\\d+)(?:[/?#]|$)`);
   const PROFILE = new RegExp(`^(?:https://(?:x|twitter)\\.com)?/(${HANDLE})/?$`);
   const FILTERED = [/^\/home$/, /^\/[^/]+\/status\/\d+/, /^\/search/];
+  const CELL = '[data-testid="cellInnerDiv"]:has(article)';
 
   // "/ivan/status/123" (or the absolute form) -> { handle, tweetId }.
   function parsePermalink(href) {
@@ -23,9 +24,10 @@
     lookupUrl: (qid, handle) => `https://x.com/i/api/graphql/${encodeURIComponent(qid)}/AboutAccountQuery?variables=${
       encodeURIComponent(JSON.stringify({ screenName: handle }))}`,
     findCells(root) {
-      const sel = '[data-testid="cellInnerDiv"]:has(article)';
-      return root.matches?.(sel) ? [root] : [...root.querySelectorAll(sel)];
+      return root.matches?.(CELL) ? [root] : [...root.querySelectorAll(CELL)];
     },
+    // The cell a changed node sits in: a recycled cell changes from inside.
+    cellOf: (node) => node.closest?.(CELL) ?? null,
     // Tweet id and handle from the permalink wrapping the post's <time>.
     // The reposter comes from socialContext's profile link; that slot also
     // carries other contexts ("X liked"), so content.js should prefer the

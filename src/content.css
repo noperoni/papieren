@@ -1,0 +1,23 @@
+/* A hidden or checking post collapses to one line drawn by ::before, naming
+   the handle and country (Req 5.1). "Remove completely" drops the line too
+   (Req 5.3); a checking post keeps its line, since it may yet be shown.
+   No filters, blur, transitions or animations (Req 9.4). */
+[data-papieren="hidden"] > *,
+[data-papieren="checking"] > * {
+  display: none !important;
+}
+
+[data-papieren="hidden"]::before,
+[data-papieren="checking"]::before {
+  content: attr(data-papieren-label);
+  display: block;
+  padding: 8px 16px;
+  font: 13px/1.4 system-ui, sans-serif;
+  color: rgb(113, 118, 123);
+  border-bottom: 1px solid rgba(113, 118, 123, 0.3);
+  cursor: pointer;
+}
+
+html[data-papieren-placeholder="remove"] [data-papieren="hidden"] {
+  display: none !important;
+}
