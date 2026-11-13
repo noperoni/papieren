@@ -42,10 +42,36 @@
     },
   };
 
-  const adapters = [legacy];
+  // Spike T0 (2026-11-13, logged out): no data-testid and no <time>. Each post
+  // is a <li> whose direct child is the post's clickable frame,
+  // div[role=link][data-href="/handle/status/id"]; quoted posts nest the same
+  // frame deeper, and the focal post of a conversation has none.
+  const REBUILT_CELL = 'li:has(> [role="link"][data-href*="/status/"])';
+
+  const rebuilt = {
+    id: 'rebuilt',
+    fallbackQid: '3M2SBIjPPDiTvMXkIWTx_w',
+    detect: (doc) => doc.documentElement.hasAttribute('data-app-version'),
+    // Unverified until an account of the maintainer's is on this app: the request
+    // shape, and whether X demands x-client-transaction-id.
+    lookupUrl: (qid, handle) => `https://api.x.com/graphql/${encodeURIComponent(qid)}/AboutAccountQuery?variables=${
+      encodeURIComponent(JSON.stringify({ screenName: handle, __relay_internal__pv__xclientsfeaturesappviewerisloggedinrelayprovider: true }))}`,
+    findCells(root) {
+      return root.matches?.(REBUILT_CELL) ? [root] : [...root.querySelectorAll(REBUILT_CELL)];
+    },
+    cellOf: (node) => node.closest?.(REBUILT_CELL) ?? null,
+    // ponytail: no reposter from the DOM, its markup needs a logged-in view.
+    // A captured timeline payload still names it; the server-rendered first
+    // screen is judged on the author alone, which can only show too much.
+    readPost(cell) {
+      return parsePermalink(cell.querySelector(':scope > [role="link"][data-href]')?.getAttribute('data-href'));
+    },
+  };
+
+  const adapters = [legacy, rebuilt];
   const detect = (doc) => adapters.find((a) => a.detect(doc)) ?? null;
 
-  const variants = { legacy, detect, parsePermalink, isFilteredPage, focalId };
+  const variants = { legacy, rebuilt, detect, parsePermalink, isFilteredPage, focalId };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.variants = variants;
