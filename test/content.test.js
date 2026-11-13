@@ -52,6 +52,7 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
   const chrome = {
     storage: { local: area },
     runtime: {
+      id: 'papieren-test',
       async sendMessage(msg) { sent.push(structuredClone(msg)); return structuredClone(replies[msg.type]); },
       onMessage: { addListener: (l) => onMessage.push(l) },
     },
@@ -61,23 +62,26 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
   Object.assign(document, {
     cookie, readyState: 'complete', hidden: false,
     body: { isConnected: true }, documentElement: { dataset: {} },
+    querySelectorAll: () => cells.filter((c) => c.dataset.papieren !== undefined),
   });
   const toPage = [];
   document.addEventListener('papieren:to-page', (e) => toPage.push(JSON.parse(e.detail)));
   const fromPage = (msg) => document.dispatchEvent(new CustomEvent('papieren:from-page', { detail: JSON.stringify(msg) }));
 
-  const observed = { io: null };
+  const observed = { io: null, off: [] };
   class IntersectionObserver {
     constructor(cb) { this.cb = cb; observed.io = this; }
     observe() {}
     unobserve() {}
+    disconnect() { observed.off.push('io'); }
   }
   const inView = (cell) => observed.io.cb([{ isIntersecting: true, target: cell }]);
 
   const location = { pathname: '/home' };
   const context = vm.createContext({
     chrome, document, location, CustomEvent, IntersectionObserver,
-    MutationObserver: class { observe() {} },
+    MutationObserver: class { observe() {} disconnect() { observed.off.push('mo'); } },
+    AbortController,
     requestAnimationFrame: (fn) => { setImmediate(fn); return 1; },
     setTimeout: (fn, ms) => timers.push(ms), clearTimeout: () => {},
   });
@@ -96,7 +100,7 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     document.dispatchEvent(ev);
   };
   const stats = () => new Promise((resolve) => onMessage[0]({ type: 'stats' }, {}, (r) => resolve(structuredClone(r))));
-  return { data, sent, timers, toPage, fromPage, inView, location, click, stats, replies, area };
+  return { data, sent, timers, toPage, fromPage, inView, location, click, stats, replies, area, document, runtime: chrome.runtime, observed };
 }
 
 test('X\'s own About answer is cached with lookups off (Req 3.8)', async () => {
@@ -248,5 +252,33 @@ test('an unknown layout filters nothing and tells the worker (design: UnknownVar
   const t = load({ local: { settings: { countries: ['Russia'] }, 'c:ivan_example': RUSSIA }, cells: [cell], layout: false });
   await settle();
   assert.deepEqual(t.sent.filter((m) => m.type === 'layout'), [{ type: 'layout', known: false }]);
+  assert.equal(cell.dataset.papieren, undefined);
+});
+
+// After an extension reload Chrome leaves the old script running in the tab
+// with chrome.runtime.id gone and no more storage events: stale settings.
+test('orphaned by an extension reload, the next DOM change shows every post and nothing re-marks', async () => {
+  const cell = fakeCell('1', 'Ivan_Example');
+  const t = load({ local: { settings: { countries: ['Russia'] }, 'c:ivan_example': RUSSIA }, cells: [cell] });
+  await settle();
+  assert.equal(cell.dataset.papieren, 'hidden');
+  delete t.runtime.id;
+  await t.area.set({ 'c:other': RUSSIA }); // stands in for a DOM change
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+  assert.equal(t.document.documentElement.dataset.papierenPlaceholder, undefined);
+  assert.deepEqual(t.observed.off, ['mo', 'io']);
+  t.click(cell);
+  await t.area.set({ 'c:other2': RUSSIA });
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+});
+
+test('orphaned, the tab coming back into view hands the feed back at once', async () => {
+  const cell = fakeCell('1', 'Ivan_Example');
+  const t = load({ local: { settings: { countries: ['Russia'] }, 'c:ivan_example': RUSSIA }, cells: [cell] });
+  await settle();
+  delete t.runtime.id;
+  t.document.dispatchEvent(new Event('visibilitychange'));
   assert.equal(cell.dataset.papieren, undefined);
 });

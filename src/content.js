@@ -16,6 +16,7 @@
   let adapter = null;
   let ready = false;              // the hook holds X's bearer (HookNotReady until then)
   let stopped = false;            // the last permit or report said stopped or disabled
+  const off = new AbortController(); // removes the DOM listeners, see orphaned()
 
   const message = async (msg) => {
     try {
@@ -86,7 +87,7 @@
       answers.get(msg.reqId)(msg);
       answers.delete(msg.reqId);
     }
-  });
+  }, { signal: off.signal });
 
   // --- Cells ---
 
@@ -108,6 +109,7 @@
 
   function flush() {
     frame = 0;
+    if (orphaned()) return;
     if (location.pathname !== path) { // navigation clears reveals, no listener needed
       path = location.pathname;
       revealed.clear();
@@ -192,7 +194,7 @@
     e.stopPropagation();
     revealed.add(cell.dataset.papierenId);
     cell.dataset.papieren = 'revealed';
-  }, true);
+  }, { capture: true, signal: off.signal });
 
   // --- Lookup queue: one in flight per tab, the worker decides when ---
 
@@ -261,9 +263,10 @@
   }
 
   document.addEventListener('visibilitychange', () => {
+    if (orphaned()) return;
     if (document.hidden) clearTimeout(timer);
     else pump();
-  });
+  }, { signal: off.signal });
 
   // --- Settings and cache, live from every tab (Req 6.2, 1.3, 2.3) ---
 
@@ -295,6 +298,27 @@
     return false;
   });
 
+  // --- Orphan ---
+
+  // An extension reload leaves this script running in the tab, cut off from
+  // storage events and the worker, so its settings go stale. It hands the feed
+  // back to X instead; the tab's next load runs the new script.
+  let mo = null;
+  function orphaned() {
+    if (chrome.runtime?.id) return false;
+    if (!off.signal.aborted) {
+      off.abort();
+      mo?.disconnect();
+      io.disconnect();
+      clearTimeout(timer);
+      stopped = true;
+      queue.length = 0;
+      for (const cell of document.querySelectorAll('[data-papieren]')) clear(cell);
+      delete document.documentElement.dataset.papierenPlaceholder;
+    }
+    return true;
+  }
+
   // --- Boot ---
 
   async function boot() {
@@ -311,7 +335,7 @@
     adapter = variants.detect(document);
     message({ type: 'layout', known: !!adapter }); // "?" on this tab when unknown
     if (!adapter) return;
-    new MutationObserver((records) => {
+    mo = new MutationObserver((records) => {
       for (const r of records) {
         for (const n of r.addedNodes) {
           const el = n.nodeType === 1 ? n : n.parentElement;
@@ -319,7 +343,8 @@
         }
       }
       schedule();
-    }).observe(document.body, { childList: true, subtree: true });
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
     markAll();
     pump();
   }
