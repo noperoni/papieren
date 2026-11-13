@@ -1,0 +1,153 @@
+# Papieren manual checks
+
+One check per acceptance criterion of `specs/papieren-country-filter/requirements.md`, run by hand in Brave with Papieren loaded unpacked. The unit tests (`npm test`) cover the logic; these checks cover what only a real x.com tab can show.
+
+## Where a check runs
+
+The **Run** column says where each check can be done:
+
+- **L**: the legacy app, on the main account, with country lookups **off**. Never switch lookups on here.
+- **R**: the rebuilt app, logged out, in a private window (turn on Allow in Private for Papieren in `brave://extensions` first, and off again afterwards). Only what X shows logged out is reachable, which in practice means conversation pages and profiles.
+- **B**: the burner-account trial, the only place lookups are ever on. It also carries the rebuilt app's logged-in checks: repost markup, timeline payloads and lookups on `api.x.com`.
+- **Unit**: no safe way to provoke it by hand; the named unit test covers it.
+
+## Setup
+
+1. `brave://extensions`, Developer mode on, Load unpacked, pick `papieren/`. After any code change, reload the Papieren card, then F5 every x.com tab: a content script orphaned by the reload stops filtering until F5.
+2. Open the service worker console: Papieren card, "service worker" link, Console tab. Keep it open while testing, which also keeps the worker awake, and paste the helpers below. Commands in the checks run there.
+
+```js
+const seed = (handle, c, more = {}) =>
+  chrome.storage.local.set({ ['c:' + handle.toLowerCase()]: { c, a: true, k: 'unverified', t: Date.now(), ...more } });
+const unseed = (handle) => chrome.storage.local.remove('c:' + handle.toLowerCase());
+const peek = async (key) => (await chrome.storage.local.get(key))[key];
+```
+
+3. `seed` stands in for a lookup: it writes a cache entry exactly as a lookup would, and the open x.com tabs react at once. `@A`, `@B`, `@D` below are any authors visible in the feed; `<you>` is your own handle.
+4. **Clean up after every session**: `unseed` each seeded handle. A seeded entry stays fresh for 30 days and would block that author's real lookup.
+5. The source checks, run from the repository root (they work in fish and bash alike):
+
+```sh
+# S1 (4.1): the requests Papieren itself sends
+grep -rnE "nativeFetch\(|sendBeacon|WebSocket|EventSource|\.send\(" papieren/src papieren/popup
+# S2 (4.2): every host named in the code
+grep -rnoE "https?://[a-z.]+" papieren/src papieren/popup papieren/manifest.json
+# S3 (4.4): storage other than chrome.storage.local
+grep -rnE "localStorage|sessionStorage|indexedDB|storage\.sync" papieren/src papieren/popup
+# S4 (9.4): filters, transitions, animations, inline styles
+grep -nE "^\s*(filter|backdrop-filter|transition|animation)[a-z-]*\s*:" papieren/src/content.css papieren/popup/popup.css
+grep -rn "\.style\." papieren/src papieren/popup
+```
+6. Telling requests apart: Papieren's lookups and X's own "About this account" fetch are both `AboutAccountQuery`. Open no About this account panel during a B check, and every `AboutAccountQuery` in the Network panel is Papieren's.
+
+## Requirement 1: Blocklist filtering
+
+Mode "Hide the ticked countries".
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 1.1 | L R | Tick France. `seed('A', 'France')`. | Every @A post turns into `Hidden: @A · France (click to show)`. |
+| 1.2 | L R | France ticked. Pick a visible @B for whom `await peek('c:b')` is `undefined`. | @B's posts stay as they are. |
+| 1.3 | L R | France ticked, @A visible and not seeded. Without touching the tab, `seed('A', 'France')`. On L, also repeat with `unseed('A')`, ticking @A's real country, then opening @A's About this account in a second tab (X's own request, see 3.8). | @A's posts collapse within a second, without a reload. |
+| 1.4 | L R | `seed('A', 'Europe')`, reopen the popup, tick Europe (listed because the cache now holds it). | @A hidden, the line ending `· Europe`. |
+| 1.5 | L R | With @A hidden, open @A's profile, then (L) Notifications and a List. Then a conversation with @A replying, and (L) `/search?q=from:A`. | @A shown on the profile, notifications and the list; hidden in the conversation replies and the search. The focal post (the one in the URL) is always shown. |
+| 1.6 | L, B | Following timeline, a repost by @R of a post by @O. `seed('R', 'France')`, @O not seeded, France ticked. Then `unseed('R')`, `seed('O', 'France')`. If a repost of yours shows on a filtered page: `seed('<you>', 'France')`, @O unseeded. | Hidden in the first two cases, your own repost shown in the last (you are never judged as the reposter). Rebuilt app: no reposter in the DOM yet, so it fails open; check logged in on B. |
+
+## Requirement 2: Allowlist filtering
+
+Mode "Show only the ticked countries".
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 2.1 | L R | Tick Germany only. `seed('A', 'France')`. | @A hidden, the line ending `· France`. |
+| 2.2 | B | Lookups on, scroll to an author not yet cached. | Their post shows `Checking @B's country (click to show)` until the lookup returns. |
+| 2.3 | L R, B | L R: Germany ticked, `seed('A', 'France')` (hidden), then `seed('A', 'Germany')`. B: a Checking line from 2.2 whose author resolves to a ticked country. | The post comes back in place, scroll position unchanged, without a reload. |
+| 2.4 | L | Germany ticked, `seed('<you>', 'France')`. Open a conversation you replied in, or `/search?q=from:<you>`. | Your own posts are shown. |
+
+## Requirement 3: Safe country lookups
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 3.1 | L, B | L: type 46 in "Lookups per 15 minutes", close and reopen the popup; then type 0 and do the same. B: lookups on, scroll for 15 minutes, Network panel filtered on `AboutAccountQuery`. | L: the field reads 45, then 1. B: no 15-minute stretch holds more lookups than the budget. |
+| 3.2 | B | Leave the page still for 2 minutes once the authors on screen are cached; then scroll by one screen. | No lookup while the page is still. Each new lookup's `screenName` (in the request's `variables`) is an author within about one screen of the view. |
+| 3.3 | B | After @B has been looked up, F5 and scroll back to @B. | No second lookup for @B, and `(await peek('c:b')).t` is unchanged. |
+| 3.4 | Unit, B | Not safely provokable: `test/budget.test.js` covers the 429, the `reset` time, the 15-minute default and `remaining <= 5`. If X does answer 429 during the trial, open the popup. | The popup reads `X rate limit: lookups resume at HH:MM.`, and no lookup is sent before then. |
+| 3.5 | B | Network panel during a burst of new authors, sorted by start time. | Consecutive lookups start at least 2 seconds apart. |
+| 3.6 | L | In a spare Brave profile (or Export, Remove the extension, Load unpacked again: the cache is lost), open the popup. `await peek('settings')`. | "Look up the country of unknown authors" unticked, settings absent or `lookups: false`. The other defaults: hide mode, nothing ticked, one line, budget 40. |
+| 3.7 | L, B | Tick the lookups box, read the panel, then Cancel. On B only: tick again and press "I accept the risk". **Never press Accept on the main account.** | The panel quotes X's Terms of Service section 4 and the Automation rules' "scripting the X website" line; `await peek('settings')` still shows lookups off while it is open; Cancel closes it and unticks the box. On B, lookups are on only after Accept. |
+| 3.8 | L, B | Lookups off. Open @C's About this account from their profile. `await peek('c:c')`. | The entry exists, `c` matches X's "Account based in", and `t` is from the last minute. |
+| 3.9 | L | Lookups off, Germany ticked in allow mode, @B visible and not cached. | @B shown normally, no `Checking` line anywhere, and the popup reads `Lookups off: filtering uses countries already cached.` |
+
+## Requirement 4: Hide-only, no account actions
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 4.1 | L, B | S1. B: Network panel with the Method column, while scrolling. | One hit, the `nativeFetch(` in `page-hook.js` with `method: 'GET'` just below it (the XHR and fetch wrappers only read X's own requests and pass them on). B: every lookup is a GET. |
+| 4.2 | L | S2. Keep the service worker's Network tab and the popup's (right-click the popup, Inspect, Network) open through a session of checks. | Only `x.com` and `api.x.com` appear. The worker and popup Network tabs list nothing beyond the extension's own files. |
+| 4.3 | L | The 4.2 results, plus the `permissions` line of `papieren/manifest.json`. | `permissions` is `["storage"]` alone, and no request goes to a third host from the worker, the popup or the tab. |
+| 4.4 | L | `await chrome.storage.sync.get(null)` and `await chrome.storage.local.get(null)`. x.com DevTools, Application: Local storage, Session storage, IndexedDB. S3. | sync is `{}`; local holds only `settings`, `c:*` and `qid:*` keys; no Papieren key in x.com's own storage; S3 prints nothing. (`chrome.storage.session` holds the lookup budget's state, which clears with the browser.) |
+
+## Requirement 5: Hidden-post presentation
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 5.1 | L R | Any post hidden by 1.1. | One line: `Hidden: @A · France (click to show)`. |
+| 5.2 | L R | Click the line; scroll it off screen and back; then open another page and come back. | The post is shown after the click and still shown after the scroll; hidden again after the navigation. |
+| 5.3 | L R | Display, "Remove completely"; then back to "One line naming the author". | Hidden posts vanish with no line, then return as lines, without a reload. On B, Checking lines stay visible in both styles. |
+| 5.4 | L R | Three @A posts hidden (`seed('A', 'France')`) and one @D post (`seed('D', 'Brazil')`, Brazil ticked). Open the popup. | "Hidden on this page" lists France 3 and Brazil 1. |
+
+## Requirement 6: Settings
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 6.1 | L | After 1.4, open the popup and search "rus", "united", "eur"; clear the search and scroll to the end of the list. | Russia, United States and India are listed, so is the seeded Europe, and Unknown comes last; the search narrows the list; both mode buttons are there. |
+| 6.2 | L R | With the popup open over an x.com tab, tick and untick France, switch mode, switch the Display style. Then switch to a second x.com tab. | The page under the popup follows each change within a second, the second tab is already up to date, and nothing reloads. |
+| 6.3 | L R, B | Tick Pause; then untick it. | Every hidden post is shown and the popup reads `Paused: every post is shown and no lookups run.`; unticking brings the filtering back without a reload. B: no lookup while paused. |
+| 6.4 | L | Export. Change the mode, Import the exported file. Then import a file holding only `{`, a copy with `"mode": "x"`, and a copy with `"lookups": true`. | The export is JSON with `v`, `mode`, `countries`, `placeholder`, `paused`, `lookups`, `budget`. Importing it restores the mode and reads `Imported.` The bad files read `Not imported: The file is not valid JSON.` and `Not imported: mode must be "block" or "allow".` with the settings unchanged. The `"lookups": true` copy imports, but lookups stay off. |
+
+## Requirement 7: Failure behaviour
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 7.1 | B | x.com DevTools, Network request blocking, add `*AboutAccountQuery*`, scroll to new authors. Afterwards remove the pattern, then Pause and unpause. | After the third blocked lookup: a red `!` badge, the popup reads `Lookups stopped after 3 failed attempts. Pause and unpause to retry.`, and no lookup follows. Pause and unpause clears it. |
+| 7.2 | L, B | L: 1.1 with lookups off, which counts as stopped (3.9). B: the stopped state of 7.1. | Cached authors stay hidden. |
+| 7.3 | L, B | Allow mode, @B visible and not cached. L: lookups off. B: Checking lines on screen when 7.1's stop happens. | @B shown. On B the Checking lines turn back into posts once lookups stop. |
+| 7.4 | L R | `seed('A', null)`. Block mode: tick Unknown, then untick it. | `Hidden: @A · Unknown (click to show)` while ticked, shown once unticked. |
+| 7.5 | L | Open `https://x.com/robots.txt`, an x.com page that is not the app. The post-level case, a cell whose author cannot be read, is covered in `test/content.test.js`. | An amber `?` badge on that tab only, and the popup reads `X layout not recognised on this tab: nothing is filtered here.` |
+
+## Requirement 8: Location confidence indicator
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 8.1 | L, B | After 3.8, or after a lookup on B, `await peek('c:c')`. | The entry has `a` and `k`, plus `s` when the About page shows "Connected via" with a country. `cc` appears only if X ever sends a creation country (none seen so far). |
+| 8.2 | L, B | Capture, as in 3.8, an author whose About page shows the same country under "Account based in" and "Connected via", with no accuracy note. Hide that country. | `k` is `confirmed`, and the placeholder ends `· confirmed`. |
+| 8.3 | L, B | The same with an author whose two countries differ, or whose About page says the location may not be accurate. | `k` is `flagged`, and the placeholder ends `· flagged`. |
+| 8.4 | L R | `seed('A', 'France', { s: 'France', k: 'confirmed' })`, `seed('D', 'France', { a: false, k: 'flagged' })`, France ticked. Open the popup. | The lines end `· France · confirmed` and `· France · flagged`, and the popup's Marks column reads `1 confirmed, 1 flagged`. |
+| 8.5 | L R | With 8.4's entries, untick France, then tick it again. | Both authors are shown together and hidden together: the mark never changes the verdict. |
+
+## Requirement 9: Resource footprint
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| 9.1 | L | Brave Task Manager (Shift+Esc), Memory footprint of the x.com tab. Run A: Papieren disabled, a fresh tab, 30 minutes of scrolling `/home`. Run B: the same with Papieren enabled and some countries ticked. | B minus A is at most 50 MB. The figure is noisy: repeat both runs when the gap is within 10 MB of the limit. |
+| 9.2 | L | x.com DevTools, Performance, no CPU throttling, record 20 seconds of fast scrolling on `/home`. Event log, filtered on Papieren's extension id. | No single Papieren mutation-observer callback or animation-frame task takes more than 8 ms. |
+| 9.3 | L, B | Record 60 seconds in the Performance panel: 10 s on the x.com tab, 40 s on another tab, 10 s back. | No task starts in `content.js` during the hidden 40 s (no timer, no animation frame). `page-hook.js` may appear only inside X's own network callbacks, since it reads X's responses. B: no lookup while hidden. |
+| 9.4 | L | S4. | Both commands print nothing. |
+| 9.5 | L | Close every x.com tab, the popup and the service worker console, and wait a minute. | The Papieren card in `brave://extensions` reads "service worker (Inactive)", and Task Manager has no Papieren service worker row. |
+
+## Beyond the criteria
+
+| Check | Run | Do | Pass when |
+|---|---|---|---|
+| Orphan teardown | L | With posts hidden, reload the Papieren card, then return to the x.com tab without F5. Then F5. | The placeholders vanish and the posts show unfiltered; F5 brings the placeholders back. |
+
+## Known gaps
+
+- Rebuilt app, logged in: repost markup, timeline payloads and lookups are unverified until the burner trial.
+- A reposted original seen on its own may be hidden for the reposter's country (an earlier decision).
+- The GraphQL "query not found" form of OpNotFound is not handled (`ponytail:` in the code).
+
+## Run log
+
+| Date | App | Account | Checks run | Failures |
+|---|---|---|---|---|
