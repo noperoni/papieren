@@ -42,6 +42,7 @@ test('import: a good file replaces settings, duplicates dropped, budget clamped'
   assert.equal(r.ok, true);
   assert.deepEqual(r.settings, {
     v: 1, mode: 'allow', countries: ['France', 'Unknown'], placeholder: 'remove', paused: false, lookups: false, budget: 45,
+    db: normalize(undefined).db,
   });
 });
 
@@ -71,5 +72,58 @@ test('import: a bad file is rejected whole with a reason (Req 6.4)', () => {
     assert.equal(r.ok, false, text.slice(0, 60));
     assert.equal(typeof r.reason, 'string');
     assert.equal('settings' in r, false);
+  }
+});
+
+// --- Database block (database Req 1.1, 2.1, 2.2, 3.5, 1.4) ---
+
+test('db defaults: switch and detections off, Retention 30 / 3 / 7 / 90 days', () => {
+  assert.deepEqual(normalize(undefined).db, {
+    on: false, copy: false, everywhere: false, media: false, offender: false,
+    keep: { cache: 30, memory: 3, history: 7, stats: 90 },
+  });
+});
+
+test('db normalize: only exact true switches anything on; Retention clamped to 1..365', () => {
+  const db = normalize({ db: { on: 'yes', copy: true, media: 1, keep: { cache: 400, memory: 0, history: 7.8, stats: 'x' } } }).db;
+  assert.equal(db.on, false);
+  assert.equal(db.copy, true);
+  assert.equal(db.media, false);
+  assert.deepEqual(db.keep, { cache: 365, memory: 1, history: 7, stats: 90 });
+  assert.deepEqual(normalize({ db: [] }).db, normalize(undefined).db);
+  assert.deepEqual(normalize({ db: { keep: null } }).db.keep, normalize(undefined).db.keep);
+});
+
+test('db import: a good block is taken, but db.on keeps its current value', () => {
+  const on = { ...DEFAULTS, db: { ...DEFAULTS.db, on: true } };
+  const r = parseImport(file({ db: { on: false, everywhere: true, keep: { history: 14 } } }), on);
+  assert.equal(r.ok, true);
+  assert.equal(r.settings.db.on, true);
+  assert.equal(r.settings.db.everywhere, true);
+  assert.deepEqual(r.settings.db.keep, { cache: 30, memory: 3, history: 14, stats: 90 });
+  assert.equal(parseImport(file({ db: { on: true } }), DEFAULTS).settings.db.on, false);
+});
+
+test('db import: a file without db keeps the current block whole', () => {
+  const cur = normalize({ db: { on: true, copy: true, keep: { memory: 5 } } });
+  assert.deepEqual(parseImport(file(), cur).settings.db, cur.db);
+});
+
+test('db import: a malformed block rejects the whole file', () => {
+  const bad = [
+    { db: 'on' },
+    { db: [] },
+    { db: { copy: 'yes' } },
+    { db: { on: 1 } },
+    { db: { keep: [] } },
+    { db: { keep: { cache: 0 } } },
+    { db: { keep: { stats: 366 } } },
+    { db: { keep: { memory: 2.5 } } },
+    { db: { keep: { history: '7' } } },
+  ];
+  for (const over of bad) {
+    const r = parseImport(file(over), DEFAULTS);
+    assert.equal(r.ok, false, JSON.stringify(over));
+    assert.equal(typeof r.reason, 'string');
   }
 });
