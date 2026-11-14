@@ -1,6 +1,6 @@
 {
   "name": "papieren",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "x.com feed filter by account country (Brave MV3 extension)",
   "scripts": {
