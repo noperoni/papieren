@@ -1,6 +1,7 @@
-// Runs src/background.js in a sandbox with a fake chrome.* and clock. The two
+// Runs src/background.js in a sandbox with a fake chrome.* and clock. The
 // side-effect imports are replaced by loading those libs into the same global
 // first, which is what the browser's module loader does before the body runs.
+// The sandbox has no IndexedDB: with the database off, nothing may reach it.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,9 +10,9 @@ const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'src');
 const SOURCE = fs.readFileSync(path.join(SRC, 'background.js'), 'utf8');
-const IMPORTS = /^import '\.\/lib\/(budget|settings)\.js';\n/gm;
+const IMPORTS = /^import '\.\/lib\/(budget|settings|memory|records|db)\.js';\n/gm;
 const BODY = SOURCE.replace(IMPORTS, '');
-const LIBS = ['budget.js', 'settings.js'].map((f) => fs.readFileSync(path.join(SRC, 'lib', f), 'utf8'));
+const LIBS = ['budget.js', 'settings.js', 'memory.js', 'records.js', 'db.js'].map((f) => fs.readFileSync(path.join(SRC, 'lib', f), 'utf8'));
 const LOOKUPS_ON = { settings: { lookups: true } };
 
 function slot() {
@@ -72,8 +73,8 @@ function loadWorker({ local = {}, session = fakeArea(), now = 1_000_000 } = {}) 
 
 const cacheOf = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`c:user${i}`, { c: 'Spain', a: true, k: 'unverified', t: i }]));
 
-test('imports only the two libs, registers every listener at load, holds no timer (Req 9.3, 9.5)', () => {
-  assert.equal(SOURCE.match(IMPORTS).length, 2);
+test('imports only its five libs, registers every listener at load, holds no timer (Req 9.3, 9.5)', () => {
+  assert.equal(SOURCE.match(IMPORTS).length, 5);
   assert.doesNotMatch(BODY, /^\s*import\b/m);
   assert.doesNotMatch(SOURCE, /set(Timeout|Interval)/);
   const { chrome } = loadWorker();

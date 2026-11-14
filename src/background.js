@@ -1,16 +1,25 @@
-// Service worker (ES module): owns the lookup budget and the toolbar badge.
-// The libs register themselves on globalThis.Papieren as a side effect.
+// Service worker (ES module): owns the lookup budget, the toolbar badge and,
+// with the database switched on, its IndexedDB (database design).
+// The libs register themselves on globalThis.Papieren as a side effect;
+// memory.js before records.js, which reads it.
 import './lib/budget.js';
 import './lib/settings.js';
+import './lib/memory.js';
+import './lib/records.js';
+import './lib/db.js';
 
-const { budget, settings } = globalThis.Papieren;
+const { budget, settings, records, db } = globalThis.Papieren;
 
 const STATE_KEY = 'budget';      // chrome.storage.session: cleared with the browser session (Req 7.1)
+const DB_ERROR = 'dbError';      // chrome.storage.session: why the database failed (database Req 7.2)
 const CACHE_PREFIX = 'c:';       // chrome.storage.local cache entries, see design "Cache entry"
 const CACHE_MAX = 50000;
 const QUOTA_KEEP = 0.8;          // a quota error drops the oldest 20%
 const RED = '#d93025';
 const AMBER = '#b06000';
+const OFF = { error: 'off' };
+const FLUSH_STORES = ['memory', 'history', 'stats', 'flags'];
+const CLEAR = { memory: ['memory', 'flags'], history: ['history'], stats: ['stats'] }; // flags derive from memory
 
 // Two tabs can ask at once and every op is read-modify-write on session
 // storage, so ops run one after another. A failed op does not block the next.
@@ -30,20 +39,141 @@ function paintStopped(stopped) {
   if (stopped) chrome.action.setBadgeBackgroundColor({ color: RED });
 }
 
-// Deletes the oldest cache entries by fetch time `t`, keeping keepFor(count).
-async function pruneCache(keepFor) {
+// Deletes the cache entries drop(entry, i, n) picks: i counts from the
+// oldest fetch time `t`, n is the number of entries.
+async function pruneCache(drop) {
   const entries = Object.entries(await chrome.storage.local.get(null)).filter(([k]) => k.startsWith(CACHE_PREFIX));
-  const drop = entries.length - keepFor(entries.length);
-  if (drop <= 0) return 0;
   entries.sort(([, a], [, b]) => (a?.t ?? 0) - (b?.t ?? 0));
-  await chrome.storage.local.remove(entries.slice(0, drop).map(([k]) => k));
-  return drop;
+  const keys = entries.filter(([, e], i) => drop(e, i, entries.length)).map(([k]) => k);
+  if (keys.length) await chrome.storage.local.remove(keys);
+  return keys.length;
 }
 
-// Counts keys first, so a cache under the cap is never loaded into the worker.
+// --- Database (database design): dormant while settings.db.on is false ---
+
+const dbSettings = async () => settings.normalize((await chrome.storage.local.get('settings')).settings).db;
+
+// Short, for the popup's status line: a DOMException's name, else the message.
+const reasonOf = (e) => String((typeof DOMException === 'function' && e instanceof DOMException ? e.name : e?.message) ?? e).slice(0, 80);
+
+// The gate of every db-* handler but db-off. The switch is read first, so a
+// late flush writes nothing and IndexedDB never opens while off. A failure
+// this session answers again; a new one is kept in dbError (Req 7.2).
+async function withDb(fn) {
+  const conf = await dbSettings();
+  if (!conf.on) return OFF;
+  const known = (await chrome.storage.session.get(DB_ERROR))[DB_ERROR];
+  if (known) return { error: known };
+  try {
+    return await fn(conf);
+  } catch (e) {
+    const error = reasonOf(e);
+    await chrome.storage.session.set({ [DB_ERROR]: error });
+    return { error };
+  }
+}
+
+const collect = async (t, store, index, range) => {
+  const out = [];
+  await db.each(t, store, index, range, (v) => { out.push(v); });
+  return out;
+};
+
+// Recounts one flag from its memory rows, then writes or deletes its flags
+// row. Resolves with the row, n 0 when deleted.
+async function recount(t, kind, key, now) {
+  const r = records.flagRange(kind, key, now);
+  const flag = records.flagFor(kind, await collect(t, 'memory', r.index, IDBKeyRange.bound(r.lower, r.upper)), now);
+  if (!flag) {
+    await db.deleteWhere(t, 'flags', null, [kind, key]);
+    return { kind, key, n: 0 };
+  }
+  const row = { kind, key, ...flag, t: now };
+  await db.put(t, 'flags', row);
+  return row;
+}
+
+// One readwrite transaction (design, Worker messages): rows, reveal marks,
+// stats increments, then the touched flags in memory.js's Flags shape.
+const writeFlush = (rows, now) => db.tx(FLUSH_STORES, 'readwrite', async (t) => {
+  const [olds, seen] = await Promise.all([
+    Promise.all(rows.memory.map((r) => db.get(t, 'memory', [r.kind, r.key, r.author]))),
+    Promise.all(rows.history.map((h) => db.get(t, 'history', [h.day, h.tweet]))),
+  ]);
+  // Another tab may have stored a newer sighting; a tweet's history row for the day stays the first.
+  await Promise.all([
+    ...rows.memory.map((r, i) => db.put(t, 'memory', records.keepRow(olds[i], r))),
+    ...rows.history.filter((_, i) => !seen[i]).map((h) => db.put(t, 'history', h)),
+  ]);
+  await Promise.all(rows.revealed.map(async (tweet) => {
+    const target = records.revealTarget(await collect(t, 'history', 'tweet', IDBKeyRange.only(tweet)), rows.day);
+    if (target && !target.revealed) await db.put(t, 'history', { ...target, revealed: true });
+  }));
+  await Promise.all(rows.stats.map(async (s) => {
+    const old = await db.get(t, 'stats', [rows.day, s.rule]);
+    await db.put(t, 'stats', { day: rows.day, rule: s.rule, judged: (old?.judged ?? 0) + s.judged, hid: (old?.hid ?? 0) + s.hid });
+  }));
+  const touched = await Promise.all(records.flagKeys(rows.memory).map(({ kind, key }) => recount(t, kind, key, now)));
+  return records.toFlags(touched);
+});
+
+// QuotaExceeded sweeps once and retries once; a second failure is the gate's.
+async function flush(rows, conf, now) {
+  try {
+    return await writeFlush(rows, now);
+  } catch (e) {
+    if (e?.name !== 'QuotaExceededError') throw e;
+    await sweep(conf, now);
+    return writeFlush(rows, now);
+  }
+}
+
+// Sweep (database design): Retention per store and for the c: cache, the
+// size cap, the flag recount, then meta.lastSweep.
+async function sweep(conf, now) {
+  const cut = records.cutoffs(conf.keep, now);
+  const before = (v) => IDBKeyRange.upperBound(v, true);
+  await db.tx(['memory', 'history', 'stats'], 'readwrite', (t) => Promise.all([
+    db.deleteWhere(t, 'memory', 't', before(cut.memory)),
+    db.deleteWhere(t, 'history', 't', before(cut.history)),
+    db.deleteWhere(t, 'stats', 'day', before(cut.stats)),
+  ]));
+  await pruneCache((e) => !(e?.t >= cut.cache));
+  let usage = 0;
+  try {
+    usage = (await navigator.storage.estimate()).usage ?? 0;
+  } catch {
+    // no estimate: no size cap this round
+  }
+  const share = records.capShare(usage);
+  await db.tx(['memory', 'history', 'flags', 'meta'], 'readwrite', async (t) => {
+    // One round: the oldest share of each store by t (Req 2.5).
+    if (share > 0) {
+      await Promise.all(['history', 'memory'].map(async (store) => {
+        let left = Math.ceil((await db.count(t, store)) * share);
+        await db.each(t, store, 't', null, (_, c) => {
+          if (left-- <= 0) return false;
+          c.delete();
+        });
+      }));
+    }
+    // After the deletions, so no flag outlives its rows.
+    await Promise.all((await collect(t, 'flags')).map((f) => recount(t, f.kind, f.key, now)));
+    await db.put(t, 'meta', now, 'lastSweep');
+  });
+}
+
+async function sweepDue(now) {
+  const last = await db.tx(['meta'], 'readonly', (t) => db.get(t, 'meta', 'lastSweep'));
+  return !(now - last < records.DAY_MS); // never swept is due
+}
+
+// Counts keys first, so a cache under the cap is never loaded into the
+// worker. With the database on, a sweep.
 async function startup() {
   const count = (await chrome.storage.local.getKeys()).filter((k) => k.startsWith(CACHE_PREFIX)).length;
-  if (count > CACHE_MAX) await serial(() => pruneCache(() => CACHE_MAX));
+  if (count > CACHE_MAX) await serial(() => pruneCache((e, i, n) => i < n - CACHE_MAX));
+  await serial(() => withDb((conf) => sweep(conf, Date.now())));
 }
 
 const handlers = {
@@ -77,7 +207,47 @@ const handlers = {
   },
 
   // A content script's cache write hit the quota: it retries once after this.
-  prune: () => serial(async () => ({ removed: await pruneCache((n) => Math.floor(n * QUOTA_KEEP)) })),
+  prune: () => serial(async () => ({ removed: await pruneCache((e, i, n) => i < n - Math.floor(n * QUOTA_KEEP)) })),
+
+  // { day, memory, history, revealed, stats } from a tab -> { flags } for the keys it touched
+  'db-flush': (msg) => serial(() => withDb(async (conf) => {
+    const now = Date.now();
+    if (await sweepDue(now)) await sweep(conf, now);
+    return { flags: await flush(records.parseFlush(msg, now), conf, now) };
+  })),
+
+  // At a tab's boot -> { flags }, every flags row. A Reply_Everywhere flag
+  // is recounted first: its 24 h window slides between sweeps, and a stale
+  // one would hide its Author under a false label until the next flush.
+  'db-flags': () => serial(() => withDb(async () => {
+    const now = Date.now();
+    const rows = await db.tx(['flags', 'memory'], 'readwrite', async (t) =>
+      Promise.all((await collect(t, 'flags')).map((f) => (f.kind === 'conv' ? recount(t, f.kind, f.key, now) : f))));
+    return { flags: records.toFlags(rows) };
+  })),
+
+  // { kind } from the popup's "Delete all" (Req 2.4). The cache lives in storage.local.
+  'db-clear': (msg) => serial(async () => {
+    if (msg.kind === 'cache') return (await dbSettings()).on ? { removed: await pruneCache(() => true) } : OFF;
+    if (!Object.hasOwn(CLEAR, msg.kind)) throw new Error('db-clear needs a kind');
+    return withDb(async () => {
+      await db.clear(CLEAR[msg.kind]);
+      return {};
+    });
+  }),
+
+  // Popup open, and before an export.
+  'db-sweep': () => serial(() => withDb(async (conf) => {
+    await sweep(conf, Date.now());
+    return {};
+  })),
+
+  // After the popup's confirmation, db.on already false, so no switch check.
+  // Deletes the database; the c: cache stays (Req 1.5).
+  'db-off': () => serial(async () => {
+    await db.drop();
+    return {};
+  }),
 };
 
 // Every listener is registered synchronously at top level, so an event that
@@ -89,10 +259,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-// Turning pause on or off clears a stop (design: background.js).
+// Any settings change clears dbError, so the next db-* message tries again
+// (database Req 7.2). Turning pause on or off clears a stop (design: background.js).
 chrome.storage.local.onChanged.addListener((changes) => {
   const c = changes.settings;
-  if (!c || (c.oldValue?.paused === true) === (c.newValue?.paused === true)) return;
+  if (!c) return;
+  serial(() => chrome.storage.session.remove(DB_ERROR));
+  if ((c.oldValue?.paused === true) === (c.newValue?.paused === true)) return;
   serial(async () => {
     const state = await loadState();
     if (!state.stopped && !state.failures) return;

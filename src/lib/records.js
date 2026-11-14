@@ -45,6 +45,105 @@
   // round per sweep: the estimate lags deletions, so a loop could overshoot.
   const capShare = (usage) => (usage > CAP ? (usage - TARGET) / usage : 0);
 
+  // --- db-flush intake: the message comes from a tab, so every row is checked ---
+
+  const FLUSH_MAX = 2000;          // rows per list, the tab's buffer cap (Req 7.4)
+  const KEY_OF = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet' };
+  const PAGES = ['home', 'status', 'search'];
+  const NOT_OFFENCES = ['country', 'bm:offender'];
+  const matches = (re) => (v) => typeof v === 'string' && re.test(v);
+  const isId = matches(/^\w{1,64}$/);         // ids, fingerprints
+  const isHandle = matches(/^\w{1,50}$/);
+  const isRule = matches(/^[\w:.-]{1,64}$/);  // country, bm:<detection>, later pack:<id>
+  const isDay = matches(/^\d{4}-\d{2}-\d{2}$/);
+  const count = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+  const list = (v) => (Array.isArray(v) ? v.slice(0, FLUSH_MAX) : []);
+
+  // A flushed sighting as a stored memory row, fields in the design's order, or null.
+  function memoryRow(m) {
+    const field = Object.hasOwn(KEY_OF, m?.kind) ? KEY_OF[m.kind] : null;
+    if (!field || !isId(m[field]) || !isId(m.author) || !isHandle(m.handle) || !Number.isFinite(m.t)) return null;
+    const row = { kind: m.kind, key: m[field], author: m.author, handle: m.handle };
+    if (m.kind === 'media' || m.kind === 'offence') {
+      if (!isId(m.tweet)) return null;
+      row.tweet = m.tweet;
+    }
+    if (m.kind === 'offence') {
+      // A Repeat_Offender counts neither country hides nor its own (Glossary).
+      if (!isRule(m.rule) || NOT_OFFENCES.includes(m.rule)) return null;
+      row.rule = m.rule;
+    }
+    row.t = m.t;
+    return row;
+  }
+
+  // Two sightings of one memory key as the one row kept: the newer wins, and
+  // a media row keeps the earlier tweet, so the earliest post survives
+  // (design, IndexedDB). old is undefined for a new key.
+  function keepRow(old, r) {
+    if (!old) return r;
+    const kept = r.t >= old.t ? r : old;
+    return r.kind === 'media' ? { ...kept, tweet: memory.earlier(old.tweet, r.tweet) ? old.tweet : r.tweet } : kept;
+  }
+
+  // A db-flush message as stored rows, malformed ones dropped. One row per
+  // memory key and per history tweet, so a transaction never writes one key twice.
+  function parseFlush(msg, now) {
+    const day = isDay(msg?.day) ? msg.day : dayOf(now);
+    const mem = new Map();
+    for (const r of list(msg?.memory).map(memoryRow)) {
+      if (!r) continue;
+      const id = `${r.kind} ${r.key} ${r.author}`;
+      mem.set(id, keepRow(mem.get(id), r));
+    }
+    const history = new Map();
+    for (const h of list(msg?.history)) {
+      if (!isId(h?.tweet) || !isHandle(h.handle) || !PAGES.includes(h.page) || !isRule(h.rule) || !Number.isFinite(h.t)) continue;
+      if (!history.has(h.tweet)) history.set(h.tweet, { day, tweet: h.tweet, handle: h.handle, page: h.page, rule: h.rule, revealed: false, t: h.t });
+    }
+    const stats = [];
+    const raw = msg?.stats && typeof msg.stats === 'object' ? msg.stats : {};
+    for (const [rule, s] of Object.entries(raw)) {
+      const judged = count(s?.judged);
+      const hid = count(s?.hid);
+      if (isRule(rule) && (judged || hid)) stats.push({ rule, judged, hid });
+    }
+    return { day, memory: [...mem.values()], history: [...history.values()], revealed: [...new Set(list(msg?.revealed).filter(isId))], stats };
+  }
+
+  // Flags are keyed by the key for copy and media, by the author for conv and offence.
+  const flagKey = (r) => (r.kind === 'conv' || r.kind === 'offence' ? r.author : r.key);
+
+  // The distinct [kind, flag key] pairs a batch of memory rows touches.
+  function flagKeys(rows) {
+    const out = new Map();
+    for (const r of rows) out.set(`${r.kind} ${flagKey(r)}`, { kind: r.kind, key: flagKey(r) });
+    return [...out.values()];
+  }
+
+  // Where flagFor's rows live: the memory index and inclusive key bounds.
+  // conv reads the author's last 24 h; offence everything Retention left.
+  function flagRange(kind, key, now) {
+    if (kind === 'conv' || kind === 'offence') {
+      return { index: 'author', lower: [kind, key, kind === 'conv' ? now - memory.EVERYWHERE_MS : -Infinity], upper: [kind, key, Infinity] };
+    }
+    return { index: 'key', lower: [kind, key], upper: [kind, key] };
+  }
+
+  // flags rows { kind, key, n, first? } in memory.js's Flags shape. n 0
+  // stands for a deleted flag: memory.merge drops a falsy value.
+  function toFlags(rows) {
+    const out = memory.emptyFlags();
+    for (const r of rows) {
+      if (!Object.hasOwn(DETECTION, r?.kind)) continue;
+      out[DETECTION[r.kind]][r.key] = r.kind === 'media' && r.n ? { n: r.n, first: r.first } : r.n;
+    }
+    return out;
+  }
+
+  // The history row a reveal marks: the day's, else the latest (Req 4.3).
+  const revealTarget = (rows, day) => rows.find((r) => r.day === day) ?? rows.reduce((a, r) => (!a || r.t > a.t ? r : a), undefined);
+
   const cacheRows = (all) => Object.entries(all ?? {})
     .filter(([k]) => k.startsWith('c:'))
     .map(([k, e]) => ({ handle: k.slice(2), ...e }));
@@ -89,7 +188,10 @@
 
   const fileName = (kind, now) => (kind === 'all' ? `papieren-database-${dayOf(now)}.json` : `papieren-${kind}-${dayOf(now)}.csv`);
 
-  const records = { DAY_MS, CAP, TARGET, KINDS, DETECTION, dayOf, flagFor, cutoffs, capShare, cacheRows, toJson, toCsv, fileName };
+  const records = {
+    DAY_MS, CAP, TARGET, KINDS, DETECTION, dayOf, flagFor, cutoffs, capShare,
+    keepRow, parseFlush, flagKeys, flagRange, toFlags, revealTarget, cacheRows, toJson, toCsv, fileName,
+  };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.records = records;
