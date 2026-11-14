@@ -46,7 +46,7 @@ Mode "Hide the ticked countries".
 
 | # | Run | Do | Pass when |
 |---|---|---|---|
-| 1.1 | L R | Tick France. `seed('A', 'France')`. | Every @A post turns into `Hidden: @A · France (click to show)`. |
+| 1.1 | L R | Open `/search?q=from:A&f=live` (a profile page is not filtered, see 1.5). Tick France. `seed('A', 'France')`. | Every @A post turns into `Hidden: @A · France (click to show)`. |
 | 1.2 | L R | France ticked. Pick a visible @B for whom `await peek('c:b')` is `undefined`. | @B's posts stay as they are. |
 | 1.3 | L R | France ticked, @A visible and not seeded. Without touching the tab, `seed('A', 'France')`. On L, also repeat with `unseed('A')`, ticking @A's real country, then opening @A's About this account in a second tab (X's own request, see 3.8). | @A's posts collapse within a second, without a reload. |
 | 1.4 | L R | `seed('A', 'Europe')`, reopen the popup, tick Europe (listed because the cache now holds it). | @A hidden, the line ending `· Europe`. |
@@ -151,3 +151,4 @@ Mode "Show only the ticked countries".
 
 | Date | App | Account | Checks run | Failures |
 |---|---|---|---|---|
+| 2026-11-13 | legacy | main | 1.1, 1.2, 1.3, 1.4, 1.5 (profile half), 5.1, 5.2, 5.3, 5.4, 7.4, 7.5, 8.4, 8.5; S1 to S4 from the shell | none |
