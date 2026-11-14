@@ -14,11 +14,7 @@
   // Stored memory kind -> the detection whose flag it feeds.
   const DETECTION = { copy: 'copy', conv: 'everywhere', media: 'media', offence: 'offender' };
 
-  // Local date, YYYY-MM-DD: the day a Hidden_History or Rule_Statistics row belongs to.
-  const dayOf = (t) => {
-    const d = new Date(t);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
+  const { dayOf } = memory;
 
   // The flag one key earns from its stored rows, or null under threshold.
   // rows: copy and media rows of one [kind, key]; conv and offence rows of one author.

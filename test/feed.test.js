@@ -110,3 +110,16 @@ test('stats: hidden posts by country with confidence counts (Req 5.4, 8.4)', () 
     Unknown: { n: 1, confirmed: 0, flagged: 0 },
   });
 });
+
+test('pageKind: home, status and search; undefined elsewhere (database Req 4.1)', () => {
+  assert.equal(feed.pageKind('/home'), 'home');
+  assert.equal(feed.pageKind('/ivan/status/123'), 'status');
+  assert.equal(feed.pageKind('/search?q=x'), 'search');
+  assert.equal(feed.pageKind('/ivan'), undefined);
+});
+
+test('stats skips behaviour hides; byDetection counts them by rule (database Req 6.2)', () => {
+  const hidden = [{ rule: 'country', country: 'Russia', k: 'confirmed' }, { rule: 'bm:copy' }, { rule: 'bm:copy' }, { rule: 'bm:media' }];
+  assert.deepEqual(feed.stats(hidden), { Russia: { n: 1, confirmed: 1, flagged: 0 } });
+  assert.deepEqual(feed.byDetection(hidden), { 'bm:copy': 2, 'bm:media': 1 });
+});

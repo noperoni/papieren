@@ -32,6 +32,13 @@
     }
   }
 
+  // Local date, YYYY-MM-DD: the day a flush, a Hidden_History row or a
+  // Rule_Statistics row belongs to. Here so content.js has it; records.js re-exports it.
+  const dayOf = (t) => {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
   // X's ids grow with time: a shorter id is older, then by string order.
   const earlier = (a, b) => b === undefined || (a !== undefined && (a.length !== b.length ? a.length < b.length : a < b));
 
@@ -133,7 +140,7 @@
   // One line naming the handle and the detection (Req 6.1).
   const label = (h) => `Hidden: @${h.handle} · ${WHY[h.rule](h.n)} (click to show)`;
 
-  const memory = { THRESHOLDS, MIN_TEXT, EVERYWHERE_MS, normalize, fingerprint, earlier, createIndex, emptyFlags, observe, merge, judge, label };
+  const memory = { THRESHOLDS, MIN_TEXT, EVERYWHERE_MS, normalize, fingerprint, dayOf, earlier, createIndex, emptyFlags, observe, merge, judge, label };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.memory = memory;

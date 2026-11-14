@@ -9,7 +9,7 @@ const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'src');
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
-const LIBS = ['lib/settings.js', 'lib/rules.js', 'lib/x-parse.js', 'lib/variants.js', 'lib/feed.js'].map(read);
+const LIBS = ['lib/settings.js', 'lib/rules.js', 'lib/x-parse.js', 'lib/variants.js', 'lib/feed.js', 'lib/memory.js'].map(read);
 const CONTENT = read('content.js');
 const ABOUT = fs.readFileSync(path.join(__dirname, 'fixtures', 'about-legacy.json'), 'utf8');
 const RUSSIA = { c: 'Russia', a: true, s: 'Russia', k: 'confirmed', t: Date.now() };
@@ -28,6 +28,7 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
   const listeners = [];
   const sent = [];
   const timers = [];
+  const pending = []; // the callbacks behind timers, run by runTimers()
   let failing = failSets;
   const area = {
     data,
@@ -47,7 +48,8 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     async remove(k) { data.delete(k); },
     onChanged: { addListener: (l) => listeners.push(l) },
   };
-  const replies = { permit, report: { stopped: false }, prune: { removed: 1 }, layout: {} };
+  const noFlags = { copy: {}, everywhere: {}, media: {}, offender: {} };
+  const replies = { permit, report: { stopped: false }, prune: { removed: 1 }, layout: {}, 'db-flags': { flags: noFlags }, 'db-flush': { flags: noFlags } };
   const onMessage = [];
   const chrome = {
     storage: { local: area },
@@ -83,7 +85,9 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     MutationObserver: class { observe() {} disconnect() { observed.off.push('mo'); } },
     AbortController,
     requestAnimationFrame: (fn) => { setImmediate(fn); return 1; },
-    setTimeout: (fn, ms) => timers.push(ms), clearTimeout: () => {},
+    setTimeout: (fn, ms) => { timers.push(ms); pending.push(fn); return pending.length; },
+    clearTimeout: (id) => { if (id) pending[id - 1] = null; },
+    crypto: globalThis.crypto, TextEncoder,
   });
   for (const lib of LIBS) vm.runInContext(lib, context);
   const v = context.Papieren.variants;
@@ -100,7 +104,14 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     document.dispatchEvent(ev);
   };
   const stats = () => new Promise((resolve) => onMessage[0]({ type: 'stats' }, {}, (r) => resolve(structuredClone(r))));
-  return { data, sent, timers, toPage, fromPage, inView, location, click, stats, replies, area, document, runtime: chrome.runtime, observed };
+  const runTimers = () => {
+    for (let i = 0, n = pending.length; i < n; i++) {
+      const fn = pending[i];
+      pending[i] = null;
+      fn?.();
+    }
+  };
+  return { data, sent, timers, runTimers, toPage, fromPage, inView, location, click, stats, replies, area, document, runtime: chrome.runtime, observed };
 }
 
 test('X\'s own About answer is cached with lookups off (Req 3.8)', async () => {
@@ -149,7 +160,7 @@ test('block mode hides a listed country with its label; a click reveals it until
   await settle();
   assert.equal(cell.dataset.papieren, 'hidden');
   assert.equal(cell.dataset.papierenLabel, 'Hidden: @Ivan_Example · Russia · confirmed (click to show)');
-  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } } });
+  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } }, byDetection: {} });
 
   t.click(cell);
   assert.equal(cell.dataset.papieren, 'revealed');
@@ -281,4 +292,131 @@ test('orphaned, the tab coming back into view hands the feed back at once', asyn
   delete t.runtime.id;
   t.document.dispatchEvent(new Event('visibilitychange'));
   assert.equal(cell.dataset.papieren, undefined);
+});
+
+// --- Database (database design, content.js) ---
+
+const user = (id, handle, extra = {}) => ({ rest_id: id, core: { screen_name: handle }, ...extra });
+const tweet = (id, u, legacy = {}) => ({ __typename: 'Tweet', rest_id: id, core: { user_results: { result: u } }, legacy });
+const reply = (id, u, text, conv = 'c1') => tweet(id, u, { conversation_id_str: conv, in_reply_to_status_id_str: '1', full_text: text });
+const payload = (...tweets) => ({ kind: 'payload', op: 'TweetDetail', body: JSON.stringify({ list: tweets }) });
+const SAME = 'Congratulations on the launch, truly amazing work!';
+const hide = async (t) => {
+  t.document.hidden = true;
+  t.document.dispatchEvent(new Event('visibilitychange'));
+  await settle();
+};
+const copyThread = (t, cells) => t.fromPage(payload(...cells.map((c, i) => reply(c.post.tweetId, user(`10${i}`, `a${i}`), SAME))));
+
+test('database off: a copy-paste thread stays visible and no db-* message is sent (Req 1.2)', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ local: { settings: { db: { on: false, copy: true } } }, cells });
+  await settle();
+  copyThread(t, cells);
+  await settle();
+  await hide(t);
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  assert.deepEqual(t.sent.filter((m) => m.type.startsWith('db-')), []);
+});
+
+test('copy-paste: three Authors with one text hide with the count; the flush carries fingerprints, never text (Req 3.1, 3.6, 4, 6.1)', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const ivan = fakeCell('14', 'Ivan_Example');
+  const t = load({
+    local: { settings: { countries: ['Russia'], db: { on: true, copy: true, offender: true } }, 'c:ivan_example': RUSSIA },
+    cells: [...cells, ivan],
+  });
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flags').length, 1);
+  copyThread(t, cells);
+  await settle();
+  assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
+  assert.equal(cells[0].dataset.papierenLabel, 'Hidden: @a0 · copy-paste reply, 3 accounts (click to show)');
+  assert.equal(ivan.dataset.papieren, 'hidden');
+  assert.deepEqual((await t.stats()).byDetection, { 'bm:copy': 3 });
+  t.click(cells[0]);
+
+  await hide(t);
+  const flushes = t.sent.filter((m) => m.type === 'db-flush');
+  assert.equal(flushes.length, 1);
+  const f = flushes[0];
+  assert.doesNotMatch(JSON.stringify(f), /launch/i);
+  const copies = f.memory.filter((m) => m.kind === 'copy');
+  assert.equal(copies.length, 3);
+  assert.match(copies[0].fp, /^[0-9a-f]{16}$/);
+  assert.ok(copies.every((m) => m.fp === copies[0].fp));
+  // Offences for the behaviour hides only: a Repeat_Offender ignores country hides.
+  assert.deepEqual(f.memory.filter((m) => m.kind === 'offence').map((m) => [m.tweet, m.author, m.rule]),
+    [['11', '100', 'bm:copy'], ['12', '101', 'bm:copy'], ['13', '102', 'bm:copy']]);
+  assert.deepEqual(f.history.map((h) => [h.tweet, h.handle, h.page, h.rule]).sort(),
+    [['11', 'a0', 'home', 'bm:copy'], ['12', 'a1', 'home', 'bm:copy'], ['13', 'a2', 'home', 'bm:copy'], ['14', 'Ivan_Example', 'home', 'country']]);
+  assert.deepEqual(f.revealed, ['11']);
+  assert.deepEqual(f.stats, { country: { judged: 4, hid: 1 }, 'bm:copy': { judged: 4, hid: 3 }, 'bm:offender': { judged: 4, hid: 0 } });
+});
+
+test('worker flags hide at boot; neither a followed Author nor the viewer is hit (Req 3.4, 3.8)', async () => {
+  const bad = fakeCell('21', 'bad');
+  const friend = fakeCell('22', 'friend');
+  const mine = fakeCell('23', 'me_myself');
+  const t = load({ local: { settings: { db: { on: true, offender: true } } }, cells: [bad, friend, mine] });
+  t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5, 201: 5, 42: 5 } } };
+  await settle();
+  t.fromPage(payload(tweet('21', user('200', 'bad')), tweet('22', user('201', 'friend', { legacy: { following: true } })), tweet('23', user('42', 'me_myself'))));
+  await settle();
+  assert.equal(bad.dataset.papierenLabel, 'Hidden: @bad · repeat offender, hidden 5 times (click to show)');
+  assert.equal(friend.dataset.papieren, undefined);
+  assert.equal(mine.dataset.papieren, undefined);
+});
+
+test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', async () => {
+  const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
+  const t = load({ local: { settings: { db: { on: true, media: true } } }, cells });
+  await settle();
+  t.fromPage(payload(...cells.map((c, i) => tweet(c.post.tweetId, user(`30${i}`, `m${i}`), { extended_entities: { media: [{ id_str: 'p9' }] } }))));
+  await settle();
+  assert.deepEqual(cells.map((c) => c.dataset.papieren), [undefined, 'hidden', 'hidden']);
+  assert.equal(cells[1].dataset.papierenLabel, 'Hidden: @m1 · recycled media, 3 accounts (click to show)');
+});
+
+test('an { error } answer runs the tab as switched off; a settings change asks again (Req 7.2)', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  t.replies['db-flush'] = { error: 'UnknownError' };
+  await settle();
+  copyThread(t, cells);
+  await settle();
+  await hide(t);
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  t.document.hidden = false;
+  t.runTimers();
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
+
+  await t.area.set({ settings: { db: { on: true, copy: true, everywhere: true } } });
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flags').length, 2);
+  assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
+});
+
+test('flush: at most one per 5 s, none while hidden; switching off drops what waits (Req 7.3, 1.2)', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  await settle();
+  copyThread(t, cells);
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 0);
+  t.runTimers();
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
+  t.click(cells[0]); // a new row waits the 5 s out
+  assert.ok(t.timers.at(-1) > 4000 && t.timers.at(-1) <= 5000);
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
+
+  await t.area.set({ settings: { db: { on: false, copy: true } } });
+  await settle();
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  await hide(t);
+  t.runTimers();
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 });

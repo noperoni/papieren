@@ -79,10 +79,16 @@
   // The twid cookie is "u%3D<rest_id>".
   const viewerIdFrom = (cookie) => /(?:^|;\s*)twid=u%3D(\d+)/.exec(cookie ?? '')?.[1];
 
+  // The page a Hidden_History row names; undefined off the filtered pages.
+  const pageKind = (pathname) => (/^\/home$/.test(pathname) ? 'home'
+    : /^\/[^/]+\/status\/\d+/.test(pathname) ? 'status' : /^\/search/.test(pathname) ? 'search' : undefined);
+
   // Hidden posts on this page by country and confidence, for the popup (Req 5.4, 8.4).
+  // hidden: { rule, country?, k? }; a behaviour hide has no country.
   function stats(hidden) {
     const by = {};
     for (const { country, k } of hidden) {
+      if (country === undefined) continue;
       const row = (by[country] ??= { n: 0, confirmed: 0, flagged: 0 });
       row.n += 1;
       if (k === 'confirmed' || k === 'flagged') row[k] += 1;
@@ -90,7 +96,14 @@
     return by;
   }
 
-  const feed = { cacheKey, fresh, authorState, entryOf, label, outcome, enqueue, remember, viewerIdFrom, stats };
+  // Behaviour hides on this page by rule, for the popup (database Req 6.2).
+  function byDetection(hidden) {
+    const by = {};
+    for (const { rule } of hidden) if (rule?.startsWith('bm:')) by[rule] = (by[rule] ?? 0) + 1;
+    return by;
+  }
+
+  const feed = { cacheKey, fresh, authorState, entryOf, label, outcome, enqueue, remember, viewerIdFrom, pageKind, stats, byDetection };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.feed = feed;
