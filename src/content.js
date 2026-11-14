@@ -46,6 +46,8 @@
     const { tweets: found } = xParse.walkTimeline(body);
     for (const v of found.values()) {
       for (const u of [v.author, v.reposter]) if (viewer.id && u?.id === viewer.id) viewer.handle = u.handle;
+      // ponytail: dropped unread until intake fingerprints it (database task 5.1); no post text is kept (Req 3.6).
+      if (v.facts) delete v.facts.text;
     }
     feed.remember(tweets, found);
     markAll();

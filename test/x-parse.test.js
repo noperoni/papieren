@@ -109,3 +109,53 @@ test('walkTimeline: legacy.screen_name is read when core has none', () => {
     core: { user_results: { result: { rest_id: '2', legacy: { screen_name: 'old_shape' } } } } });
   assert.equal(walkTimeline(body).tweets.get('1').author.handle, 'old_shape');
 });
+
+// --- Facts for behaviour memory (database Req 3.1 to 3.3, 3.8) ---
+
+const userOf = (id, handle, extra = {}) => ({ user_results: { result: { rest_id: id, core: { screen_name: handle }, ...extra } } });
+const tweetOf = (id, legacy, extra = {}) => ({ __typename: 'Tweet', rest_id: id, core: userOf('9', 'someone'), legacy, ...extra });
+const walk = (node) => walkTimeline(JSON.stringify({ entries: [node] })).tweets;
+
+test('walkTimeline facts: a Reply carries its conversation and text', () => {
+  const t = walk(tweetOf('1', { conversation_id_str: '100', in_reply_to_status_id_str: '100', full_text: '@a so true' }));
+  assert.deepEqual(t.get('1').facts, { conv: '100', text: '@a so true' });
+});
+
+test('walkTimeline facts: a long post reads note_tweet before full_text', () => {
+  const note = { note_tweet: { note_tweet_results: { result: { text: 'the whole long text' } } } };
+  const t = walk(tweetOf('1', { conversation_id_str: '100', in_reply_to_status_id_str: '5', full_text: 'the whole…' }, note));
+  assert.equal(t.get('1').facts.text, 'the whole long text');
+});
+
+test('walkTimeline facts: a post that is not a Reply has no conv and no text', () => {
+  const t = walk(tweetOf('1', { conversation_id_str: '1', full_text: 'top-level post' }));
+  assert.equal(t.get('1').facts, undefined);
+});
+
+test('walkTimeline facts: media ids from extended_entities, deduplicated, else entities', () => {
+  const m = (...ids) => ids.map((id_str) => ({ id_str }));
+  let t = walk(tweetOf('1', { extended_entities: { media: m('7', '8', '7') }, entities: { media: m('7') } }));
+  assert.deepEqual(t.get('1').facts, { media: ['7', '8'] });
+  t = walk(tweetOf('1', { entities: { media: m('6') } }));
+  assert.deepEqual(t.get('1').facts, { media: ['6'] });
+});
+
+test('walkTimeline facts: a repost takes the original\'s facts, never the wrapper\'s', () => {
+  const original = tweetOf('20', { extended_entities: { media: [{ id_str: 'm1' }] } });
+  const wrapper = { __typename: 'Tweet', rest_id: '30', core: userOf('3', 'rt'),
+    legacy: { extended_entities: { media: [{ id_str: 'wrapper' }] }, retweeted_status_result: { result: original } } };
+  for (const entries of [[original, wrapper], [wrapper, original]]) {
+    const { tweets } = walkTimeline(JSON.stringify({ entries }));
+    assert.deepEqual(tweets.get('30').facts, { media: ['m1'] });
+    assert.deepEqual(tweets.get('20').facts, { media: ['m1'] });
+  }
+});
+
+test('walkTimeline: followed only when X says the viewer follows', () => {
+  const by = (extra) => walk({ __typename: 'Tweet', rest_id: '1', core: userOf('2', 'x', extra) }).get('1').author.followed;
+  assert.equal(by({ relationship_perspectives: { following: true } }), true);
+  assert.equal(by({ legacy: { following: true } }), true);
+  assert.equal(by({ legacy: { following: 'true' } }), undefined);
+  assert.equal(by({ relationship_perspectives: { following: false } }), undefined);
+  assert.equal(by({}), undefined);
+});

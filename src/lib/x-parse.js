@@ -71,8 +71,36 @@
     const ref = { id: user.rest_id, handle };
     const bio = str(user.legacy?.description);
     if (bio) ref.bio = bio.slice(0, BIO_MAX);
+    // X's own record that the viewer follows this user (database Req 3.8).
+    // ponytail: both known places; keep the one a captured payload shows.
+    if (user.relationship_perspectives?.following === true || user.legacy?.following === true) ref.followed = true;
     return ref;
   }
+
+  // What behaviour memory reads from a tweet (database design, x-parse):
+  // conv only on a Reply, text only with it (fingerprinted, then dropped by
+  // content.js), and the media ids X attached. Undefined when there is none.
+  function factsOf(tweet) {
+    const legacy = tweet?.legacy ?? {};
+    const facts = {};
+    const conv = str(legacy.conversation_id_str);
+    if (conv && str(legacy.in_reply_to_status_id_str)) {
+      facts.conv = conv;
+      const text = str(tweet.note_tweet?.note_tweet_results?.result?.text) ?? str(legacy.full_text);
+      if (text) facts.text = text;
+    }
+    const list = legacy.extended_entities?.media ?? legacy.entities?.media;
+    const media = Array.isArray(list) ? [...new Set(list.map((m) => str(m?.id_str)).filter(Boolean))] : [];
+    if (media.length) facts.media = media;
+    return Object.keys(facts).length ? facts : undefined;
+  }
+
+  // A record carries facts only when there are some, so the identity map
+  // stays as small as before for everything else.
+  const withFacts = (rec, tweet) => {
+    const facts = factsOf(tweet);
+    return facts ? { ...rec, facts } : rec;
+  };
 
   const unwrap = (t) => (t?.__typename === 'TweetWithVisibilityResults' ? t.tweet : t);
 
@@ -86,11 +114,12 @@
       // A repost cell's permalink carries the original's id, so both ids map
       // to the pair. The walk reaches the original again on its own later;
       // the guard below keeps that visit from dropping the reposter.
-      const pair = { author: originalAuthor, reposter: author };
+      // The facts are the original's: a repost wrapper has no text or media of its own.
+      const pair = withFacts({ author: originalAuthor, reposter: author }, original);
       tweets.set(tweet.rest_id, pair);
       tweets.set(original.rest_id, pair);
     } else if (!tweets.has(tweet.rest_id)) {
-      tweets.set(tweet.rest_id, { author });
+      tweets.set(tweet.rest_id, withFacts({ author }, tweet));
     }
   }
 
