@@ -187,3 +187,54 @@ test('D5.2 Export CSV: one column per header, no formulas, three trailing column
     }
   }
 });
+
+// Quota (design: QuotaExceeded). Chromium's DevTools quota override shows in
+// Storage.getUsageAndQuota but IndexedDB commits ignore it (measured
+// 2026-11-15: 2.4 MB written against a 1.5 MB quota), and the real quota is
+// a share of the disk, so the error is injected: the flush's own transaction
+// rejects as a full disk aborts it, before writing anything. The sweep, the
+// retry and the gate around them are the real worker against real IndexedDB.
+for (const [fails, what] of [[1, 'sweeps once and the retry lands'], [2, 'fails twice and the gate keeps the error']]) {
+  test(`D7.2 quota: a full database ${what}`, async (tc) => {
+    const b = await fresh(tc);
+    const p = await b.popup(); // opening it sweeps, so the old rows go in after
+    await switchOn(b, p);
+    await b.sw(async (n) => {
+      const pad = 'x'.repeat(200);
+      const old = [];
+      for (let i = 0; i < 50; i++) old.push({ day: '2026-01-01', tweet: String(1000 + i), handle: 'old' + i, page: 'home', rule: 'country', revealed: false, t: t.ago(30), pad });
+      await t.put('history', ...old);
+      // Swept just now, so the flush's daily sweep is not due: only the quota path sweeps.
+      await Papieren.db.tx(['meta'], 'readwrite', (x) => Papieren.db.put(x, 'meta', Date.now(), 'lastSweep'));
+      const { db } = Papieren;
+      const tx = db.tx;
+      t.quota = { left: n, thrown: 0 };
+      db.tx = (stores, mode, fn) => {
+        if (mode === 'readwrite' && stores.includes('stats') && stores.includes('flags') && t.quota.left > 0) {
+          t.quota.left--;
+          t.quota.thrown++;
+          return Promise.reject(new DOMException('The quota has been exceeded.', 'QuotaExceededError'));
+        }
+        return tx(stores, mode, fn);
+      };
+    }, fails);
+    const answer = await p.evaluate((day) => chrome.runtime.sendMessage({
+      type: 'db-flush', day, memory: [], revealed: [], stats: { country: { judged: 2, hid: 2 } },
+      history: [1, 2].map((i) => ({ tweet: String(2000 + i), handle: 'new' + i, page: 'home', rule: 'country', t: Date.now() })),
+    }), today());
+    const rows = await b.sw(() => t.rows('history'));
+    const { quota, dbError } = await b.sw(async () => ({ quota: t.quota, dbError: (await chrome.storage.session.get('dbError')).dbError }));
+    assert.equal(quota.thrown, fails, 'the injection fired, so the worker kept its patch');
+    assert.equal(rows.filter((r) => r.handle.startsWith('old')).length, 0, 'the quota sweep removed rows past Retention');
+    const fresh2 = rows.filter((r) => r.handle.startsWith('new')).length;
+    if (fails === 1) {
+      assert.ok(answer.flags && !answer.error, JSON.stringify(answer));
+      assert.equal(fresh2, 2, 'the retry wrote the flush');
+      assert.equal(dbError, undefined);
+    } else {
+      assert.deepEqual(answer, { error: 'QuotaExceededError' });
+      assert.equal(fresh2, 0);
+      assert.equal(dbError, 'QuotaExceededError', 'the popup line has its reason');
+    }
+  });
+}

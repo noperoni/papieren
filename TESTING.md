@@ -193,7 +193,7 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 - A reposted original seen on its own may be hidden for the reposter's country (an earlier decision).
 - The GraphQL "query not found" form of OpNotFound is not handled (`ponytail:` in the code).
 - Rule_Statistics count once per tweet per day per tab, so each F5 of a page counts its posts again; the Hidden_History rows do not double.
-- The QuotaExceeded sweep-and-retry of `db-flush` is untested by hand and by unit test.
+- The QuotaExceeded sweep-and-retry of `db-flush` is tested with an injected error (`e2e/popup.test.js`): Chromium's DevTools quota override does not bind IndexedDB, and the real quota is a share of the disk, so a real one has never been provoked.
 
 ## Run log
 
