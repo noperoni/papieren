@@ -383,6 +383,24 @@ test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', a
   assert.equal(cells[1].dataset.papierenLabel, 'Hidden: @m1 · recycled media, 3 accounts (click to show)');
 });
 
+test('dbEpoch: the worker deleted rows, so the tab drops its sightings and flags and asks again', async () => {
+  const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
+  const bad = fakeCell('21', 'bad');
+  const t = load({ local: { settings: { db: { on: true, media: true, offender: true } } }, cells: [...cells, bad] });
+  t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5 } } };
+  await settle();
+  t.fromPage(payload(tweet('21', user('200', 'bad')),
+    ...cells.map((c, i) => tweet(c.post.tweetId, user(`30${i}`, `m${i}`), { extended_entities: { media: [{ id_str: 'p9' }] } }))));
+  await settle();
+  assert.deepEqual([...cells, bad].map((c) => c.dataset.papieren), [undefined, 'hidden', 'hidden', 'hidden']);
+
+  t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: {} } };
+  await t.area.set({ dbEpoch: 2 });
+  await settle();
+  assert.equal(t.sent.filter((m) => m.type === 'db-flags').length, 2);
+  assert.ok([...cells, bad].every((c) => c.dataset.papieren !== 'hidden'));
+});
+
 test('an { error } answer runs the tab as switched off; a settings change asks again (Req 7.2)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
   const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });

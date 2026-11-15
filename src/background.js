@@ -12,6 +12,7 @@ const { budget, settings, records, db } = globalThis.Papieren;
 
 const STATE_KEY = 'budget';      // chrome.storage.session: cleared with the browser session (Req 7.1)
 const DB_ERROR = 'dbError';      // chrome.storage.session: why the database failed (database Req 7.2)
+const DB_EPOCH = 'dbEpoch';      // chrome.storage.local: when behaviour rows were last deleted, read by content.js
 const CACHE_PREFIX = 'c:';       // chrome.storage.local cache entries, see design "Cache entry"
 const CACHE_MAX = 50000;
 const QUOTA_KEEP = 0.8;          // a quota error drops the oldest 20%
@@ -128,16 +129,26 @@ async function flush(rows, conf, now) {
   }
 }
 
+// Every tab judges on its own copy of the flags and its own sightings, so
+// rows deleted here would go on hiding posts there until F5. Bumping
+// dbEpoch has every x.com tab drop both and ask for the flags again.
+const dropTabState = (now) => chrome.storage.local.set({ [DB_EPOCH]: now });
+
 // Sweep (database design): Retention per store and for the c: cache, the
-// size cap, the flag recount, then meta.lastSweep.
+// size cap, the flag recount, then meta.lastSweep. Tabs drop their state
+// when memory rows or flags changed.
 async function sweep(conf, now) {
   const cut = records.cutoffs(conf.keep, now);
   const before = (v) => IDBKeyRange.upperBound(v, true);
-  await db.tx(['memory', 'history', 'stats'], 'readwrite', (t) => Promise.all([
-    db.deleteWhere(t, 'memory', 't', before(cut.memory)),
-    db.deleteWhere(t, 'history', 't', before(cut.history)),
-    db.deleteWhere(t, 'stats', 'day', before(cut.stats)),
-  ]));
+  let memoryRows = 0;
+  await db.tx(['memory', 'history', 'stats'], 'readwrite', async (t) => {
+    memoryRows = await db.count(t, 'memory');
+    await Promise.all([
+      db.deleteWhere(t, 'memory', 't', before(cut.memory)),
+      db.deleteWhere(t, 'history', 't', before(cut.history)),
+      db.deleteWhere(t, 'stats', 'day', before(cut.stats)),
+    ]);
+  });
   await pruneCache((e) => !(e?.t >= cut.cache));
   let usage = 0;
   try {
@@ -146,6 +157,7 @@ async function sweep(conf, now) {
     // no estimate: no size cap this round
   }
   const share = records.capShare(usage);
+  let changed = false;
   await db.tx(['memory', 'history', 'flags', 'meta'], 'readwrite', async (t) => {
     // One round: the oldest share of each store by t (Req 2.5).
     if (share > 0) {
@@ -158,9 +170,12 @@ async function sweep(conf, now) {
       }));
     }
     // After the deletions, so no flag outlives its rows.
-    await Promise.all((await collect(t, 'flags')).map((f) => recount(t, f.kind, f.key, now)));
+    const old = await collect(t, 'flags');
+    const next = await Promise.all(old.map((f) => recount(t, f.kind, f.key, now)));
+    changed = (await db.count(t, 'memory')) !== memoryRows || next.some((f, i) => f.n !== old[i].n || f.first !== old[i].first);
     await db.put(t, 'meta', now, 'lastSweep');
   });
+  if (changed) await dropTabState(now);
 }
 
 async function sweepDue(now) {
@@ -232,6 +247,7 @@ const handlers = {
     if (!Object.hasOwn(CLEAR, msg.kind)) throw new Error('db-clear needs a kind');
     return withDb(async () => {
       await db.clear(CLEAR[msg.kind]);
+      if (CLEAR[msg.kind].includes('flags')) await dropTabState(Date.now());
       return {};
     });
   }),
@@ -243,7 +259,8 @@ const handlers = {
   })),
 
   // After the popup's confirmation, db.on already false, so no switch check.
-  // Deletes the database; the c: cache stays (Req 1.5).
+  // Deletes the database; the c: cache stays (Req 1.5). The settings change
+  // has already queued the same drop (below): this one answers the popup.
   'db-off': () => serial(async () => {
     await db.drop();
     return {};
@@ -265,6 +282,9 @@ chrome.storage.local.onChanged.addListener((changes) => {
   const c = changes.settings;
   if (!c) return;
   serial(() => chrome.storage.session.remove(DB_ERROR));
+  // On to off deletes the database here as well, so a popup closed before
+  // its db-off message still leaves none behind (database Req 1.5).
+  if (c.oldValue?.db?.on === true && c.newValue?.db?.on !== true) serial(() => db.drop());
   if ((c.oldValue?.paused === true) === (c.newValue?.paused === true)) return;
   serial(async () => {
     const state = await loadState();

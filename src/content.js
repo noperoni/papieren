@@ -474,6 +474,13 @@
         if (newValue) cache.set(key.slice(2), newValue);
         else cache.delete(key.slice(2));
         touched = true;
+      } else if (key === 'dbEpoch' && dbLive()) {
+        // The worker deleted behaviour rows ("Delete all", a sweep): the
+        // tab's flags and sightings may still count them. The buffer stays,
+        // it is not yet stored; the answer re-judges every cell.
+        flags = memory.emptyFlags();
+        index = memory.createIndex();
+        loadFlags();
       }
     }
     if (touched) {

@@ -194,7 +194,12 @@
   // The worker sweeps first, so no record past its Retention reaches a file
   // (design, Sweep); a failed sweep exports nothing. The popup reads the
   // rows itself and saves through <a download>, as the settings export does.
-  async function exportDb(kind) {
+  // Exports run one after another; switching off waits for the last one, or
+  // the drop would empty the stores mid-read and the read would recreate them.
+  let exporting = Promise.resolve();
+  const exportDb = (kind) => (exporting = exporting.then(() => exportNow(kind)));
+
+  async function exportNow(kind) {
     const swept = await send({ type: 'db-sweep' });
     if (swept?.error) return note(`Not exported: ${why(swept.error)}.`);
     try {
@@ -224,6 +229,7 @@
   // worker deletes the database and keeps the country cache (database Req 1.5).
   async function switchOff() {
     $('db-off').hidden = true;
+    await exporting;
     await saveDb({ on: false });
     const r = await send({ type: 'db-off' });
     note(r?.error ? `Switched off, but the database was not deleted: ${r.error}.` : 'Switched off and deleted the database. The country cache stays.');

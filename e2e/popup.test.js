@@ -106,6 +106,37 @@ test('D1.4 switching off asks first, exports, then deletes the database and keep
   assert.equal(await p.locator('#db-keep input[data-kind=history]').isDisabled(), true);
 });
 
+test('D1.4 confirming while the export still runs waits for it, and nothing recreates the database', async (tc) => {
+  const b = await fresh(tc);
+  const p = await b.popup();
+  await switchOn(b, p);
+  await seedAll(b);
+  // A large cache makes the export's storage read slow, the window the drop raced into.
+  await b.sw(() => chrome.storage.local.set(Object.fromEntries(Array.from({ length: 20000 },
+    (_, i) => [`c:bulk${i}`, { c: 'France', a: true, k: 'unverified', t: Date.now() }]))));
+  await p.locator('#db-on').click();
+  const file = await download(p, async () => {
+    await p.locator('#db-off-export').click();
+    await p.locator('#db-off-confirm').click();
+  });
+  const data = JSON.parse(file.text);
+  assert.equal(data.memory.length, 1);
+  assert.equal(data.history.length, 1);
+  await until(() => b.sw(() => t.dbExists().then((x) => !x)), 'database deleted');
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(await b.sw(() => t.dbExists()), false, 'nothing recreated it');
+});
+
+test('D1.4 the switch going off deletes the database even if no db-off message follows', async (tc) => {
+  const b = await fresh(tc);
+  const p = await b.popup();
+  await switchOn(b, p);
+  await seedAll(b);
+  await p.close();
+  await b.sw(() => t.set({ db: { on: false } }));
+  await until(() => b.sw(() => t.dbExists().then((x) => !x)), 'database deleted');
+});
+
 test('D2.1 an invalid Retention reverts, a valid one saves', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();

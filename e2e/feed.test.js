@@ -145,6 +145,34 @@ test('D3.3 to D7.2: recycled media, toggling, popup counts, database failure', a
   });
 });
 
+test('deleted rows stop hiding in an open tab without F5: Delete all, then a sweep', async (tc) => {
+  const { b, x } = await setup(tc, { db: { on: true, media: true } });
+  // Three accounts post image 999: the two later posts hide on the tab's own sightings.
+  x.set('/home', ['m0', 'm1', 'm2'].map((h, i) => post(50 + i, h, { media: ['999'] })));
+  const home = await x.open('/home');
+  await hidden(home, '51', /recycled media/);
+  await hidden(home, '52');
+  await until(async () => (await memoryRows(b)).length === 3, 'three media rows', FLUSH + 4000);
+  const p = await b.popup();
+  await p.evaluate(() => chrome.runtime.sendMessage({ type: 'db-clear', kind: 'memory' }));
+  await shown(home, '51');
+  await shown(home, '52');
+  await p.close();
+
+  // Image 888 was posted by three accounts 400 days ago, past any Retention:
+  // the worker's flag hides post 60 until the popup's sweep deletes them.
+  await b.sw(async (old) => {
+    await t.put('memory', ...['901', '902', '903'].map((a, i) => ({ kind: 'media', key: '888', author: a, handle: 'old' + i, tweet: String(i + 1), t: old })));
+    await t.put('flags', { kind: 'media', key: '888', n: 3, first: '1', t: Date.now() });
+  }, Date.now() - 400 * 864e5);
+  x.set('/home', [post(60, 'm9', { media: ['888'] })]);
+  await home.reload();
+  await home.waitForFunction(() => document.title === 'fake X ready');
+  await hidden(home, '60', /recycled media/);
+  await b.popup();
+  await shown(home, '60');
+});
+
 test('D3.8 followed accounts never reach behaviour memory', async (tc) => {
   const { b, x } = await setup(tc, { db: { on: true, copy: true, everywhere: true, media: true, offender: true } });
   const fol = (id, h, more) => post(id, h, { following: true, ...more });
