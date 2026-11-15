@@ -214,7 +214,7 @@ test('D7.3 flushes from one tab are at least 5 s apart', async (tc) => {
 });
 
 // Headless Chromium reports every tab visible whatever is in front, so this
-// half needs a window: PAPIEREN_HEADED=1 opens one on the desktop.
+// half needs a window: PAPIEREN_HEADED=1 opens a plain Chromium on the desktop.
 test('D7.3 one flush as the tab hides, none while it stays hidden', {
   skip: !HEADED && 'headless never hides a tab: PAPIEREN_HEADED=1 runs it; test/content.test.js:406 covers it meanwhile',
 }, async (tc) => {

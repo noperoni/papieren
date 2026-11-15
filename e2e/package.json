@@ -4,7 +4,8 @@
   "description": "Browser checks for papieren/TESTING.md, kept out of papieren/package.json so the extension stays dependency-free",
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 ."
+    "test": "node --test --test-concurrency=1 .",
+    "live": "node --test --test-concurrency=1 live.js"
   },
   "devDependencies": {
     "playwright-core": "1.65.1"

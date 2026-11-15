@@ -2,10 +2,15 @@
 // unpacked extension loaded, the worker console's helpers, and the popup.
 // Lives in its own package so papieren/package.json stays dependency-free.
 import { chromium } from 'playwright-core';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 export const EXT = resolve(import.meta.dirname, '..');
+// Logged-in profiles for the live run, one directory per account (gitignored).
+export const BURNER = resolve(import.meta.dirname, '.profiles', 'burner');
 const BROWSER = process.env.PAPIEREN_CHROMIUM ?? '/usr/bin/chromium';
 
 // The helpers TESTING.md has pasted into the worker console, installed as
@@ -43,15 +48,51 @@ function installHelpers() {
   };
 }
 
-// headless: false shows the window, for watching a check or a logged-in run.
-// userDataDir '' gives a temporary profile that Playwright deletes on close.
+// A plain Chromium in a window, attached over CDP with noDefaults. A
+// Playwright launch turns on focus emulation, which Chromium honours by
+// keeping the page visible behind any other tab (document.hidden never goes
+// true, so D7.3's hidden half cannot run), and its switches are what X can
+// see; login.js already logs in through plain Chromium for that reason.
+async function plain(userDataDir) {
+  const dir = userDataDir || mkdtempSync(join(tmpdir(), 'papieren-'));
+  const portFile = join(dir, 'DevToolsActivePort');
+  rmSync(portFile, { force: true }); // a stale one from a crashed run names a dead port
+  const child = spawn(BROWSER, [`--user-data-dir=${dir}`, '--remote-debugging-port=0', '--password-store=basic',
+    '--no-first-run', '--no-default-browser-check', `--load-extension=${EXT}`, 'about:blank'], { stdio: 'ignore' });
+  const exited = new Promise((r) => child.once('exit', r));
+  const end = Date.now() + 15_000;
+  let port;
+  while (!(port = existsSync(portFile) && readFileSync(portFile, 'utf8').split('\n')[0])) {
+    if (child.exitCode !== null || Date.now() > end) throw new Error(`Chromium gave no DevTools port (exit ${child.exitCode})`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });
+  // Browser.close shuts down as Ctrl+Q does, so the profile saves its cookies.
+  const close = async () => {
+    await (await browser.newBrowserCDPSession()).send('Browser.close').catch(() => {});
+    const timer = setTimeout(() => child.kill(), 10_000);
+    await exited;
+    clearTimeout(timer);
+    if (!userDataDir) rmSync(dir, { recursive: true, force: true });
+  };
+  return { ctx: browser.contexts()[0], close };
+}
+
+// headless: false is a plain Chromium in a window, for watching a check, the
+// hidden-tab half of D7.3, or a logged-in run. userDataDir '' gives a
+// temporary profile, deleted on close.
 export async function launch({ headless = true, userDataDir = '' } = {}) {
-  const ctx = await chromium.launchPersistentContext(userDataDir, {
-    executablePath: BROWSER,
-    headless,
-    acceptDownloads: true,
-    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
-  });
+  let ctx;
+  let close;
+  if (headless) {
+    ctx = await chromium.launchPersistentContext(userDataDir, {
+      executablePath: BROWSER,
+      headless,
+      acceptDownloads: true,
+      args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+    });
+    close = () => ctx.close();
+  } else ({ ctx, close } = await plain(userDataDir));
   const first = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent('serviceworker', { timeout: 10_000 });
   const id = new URL(first.url()).host;
   const worker = async () => {
@@ -82,7 +123,7 @@ export async function launch({ headless = true, userDataDir = '' } = {}) {
     return page;
   }
 
-  return { ctx, id, sw, popup, close: () => ctx.close() };
+  return { ctx, id, sw, popup, close };
 }
 
 // Saves the download a click starts and returns its name and text.
