@@ -209,6 +209,11 @@
     }
   }
 
+  function disarm(button) {
+    delete button.dataset.armed;
+    button.textContent = 'Delete all';
+  }
+
   // "Delete all" for one Record_Kind (database Req 2.4).
   async function clearKind(kind) {
     const r = await send({ type: 'db-clear', kind });
@@ -285,8 +290,21 @@
       if (!e.target.validity.valid) return render();
       saveDb({ keep: { ...current.db.keep, [e.target.dataset.kind]: Number(e.target.value) } });
     });
+    // "Delete all" asks twice: the first click arms the button, the second
+    // deletes, and moving focus away disarms it.
     $('db-keep').addEventListener('click', (e) => {
-      if (e.target.dataset.clear) clearKind(e.target.dataset.clear);
+      const b = e.target;
+      if (!b.dataset.clear) return;
+      if (!b.dataset.armed) {
+        b.dataset.armed = 'yes';
+        b.textContent = 'Click again to delete';
+        return;
+      }
+      disarm(b);
+      clearKind(b.dataset.clear);
+    });
+    $('db-keep').addEventListener('focusout', (e) => {
+      if (e.target.dataset.armed) disarm(e.target);
     });
     $('db-export').addEventListener('click', () => exportDb('all'));
     $('db-csv').addEventListener('click', () => exportDb($('db-kind').value));
