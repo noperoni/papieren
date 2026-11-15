@@ -6,12 +6,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { createHash } = require('node:crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
 const LIBS = ['lib/settings.js', 'lib/rules.js', 'lib/x-parse.js', 'lib/variants.js', 'lib/feed.js', 'lib/memory.js'].map(read);
 const CONTENT = read('content.js');
 const ABOUT = fs.readFileSync(path.join(__dirname, 'fixtures', 'about-legacy.json'), 'utf8');
+// SHA-256 resolved in one microtask. node's crypto.subtle digests on the
+// libuv threadpool, which can outlast settle() under a loaded test run and
+// land a payload's intake after the tab has already flushed and failed.
+const subtle = { digest: async (_alg, data) => Uint8Array.from(createHash('sha256').update(data).digest()).buffer };
 const RUSSIA = { c: 'Russia', a: true, s: 'Russia', k: 'confirmed', t: Date.now() };
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
 
@@ -87,7 +92,7 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     requestAnimationFrame: (fn) => { setImmediate(fn); return 1; },
     setTimeout: (fn, ms) => { timers.push(ms); pending.push(fn); return pending.length; },
     clearTimeout: (id) => { if (id) pending[id - 1] = null; },
-    crypto: globalThis.crypto, TextEncoder,
+    crypto: { subtle }, TextEncoder,
   });
   for (const lib of LIBS) vm.runInContext(lib, context);
   const v = context.Papieren.variants;
