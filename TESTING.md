@@ -139,6 +139,8 @@ Mode "Show only the ticked countries".
 
 Every D row runs on **L**. The database lives in the extension's own origin: its IndexedDB is under the worker console's Application tab (or the popup's: right-click it, Inspect), never under x.com's.
 
+**Automated (2026-11-15).** Every D row but D7.4 also runs headless in `papieren/e2e/`, its own package so `papieren/package.json` stays dependency-free: `cd papieren/e2e; npm install; npm test` (about 80 s). `popup.test.js` covers the rows that need only the popup and the worker; `feed.test.js` runs the feed rows against `fakex.js`, a routed x.com that answers every request itself, so nothing reaches X. The fake is only as true to X as the unit-test payloads are, which makes D3.8's follow flag provisional until a private ticket. Headless Chromium never hides a tab, so the second half of D7.3 runs only with `env PAPIEREN_HEADED=1 npm test`, which opens a window. D7.4 stays manual. A green run stands in for the L rows it covers. What it cannot show is real X drift, which is the live run's job.
+
 Database helpers, pasted into the worker console after the Setup ones. `rows` and `put` open the database, so use them **only with the switch on**: with it off they would create the very database D1.1 and D1.2 expect absent. Seeded rows are invented: clean up with the popup's "Delete all" for the kind seeded, or switch off.
 
 ```js
