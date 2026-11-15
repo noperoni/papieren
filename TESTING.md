@@ -1,6 +1,6 @@
 # Papieren manual checks
 
-One check per acceptance criterion of `specs/papieren-country-filter/requirements.md`, run by hand in Brave with Papieren loaded unpacked. The unit tests (`npm test`) cover the logic; these checks cover what only a real x.com tab can show.
+One check per acceptance criterion of `specs/papieren-country-filter/requirements.md`, then the D rows for `specs/papieren-database/requirements.md`, run by hand in Brave with Papieren loaded unpacked. The unit tests (`npm test`) cover the logic; these checks cover what only a real x.com tab can show.
 
 ## Where a check runs
 
@@ -32,8 +32,8 @@ const peek = async (key) => (await chrome.storage.local.get(key))[key];
 grep -rnE "nativeFetch\(|sendBeacon|WebSocket|EventSource|\.send\(" papieren/src papieren/popup
 # S2 (4.2): every host named in the code
 grep -rnoE "https?://[a-z.]+" papieren/src papieren/popup papieren/manifest.json
-# S3 (4.4): storage other than chrome.storage.local
-grep -rnE "localStorage|sessionStorage|indexedDB|storage\.sync" papieren/src papieren/popup
+# S3 (4.4, D7.1): storage other than chrome.storage.local, bar the database's own wrapper
+grep -rnE "localStorage|sessionStorage|indexedDB|storage\.sync" papieren/src papieren/popup | grep -v '^papieren/src/lib/db.js:'
 # S4 (9.4): filters, transitions, animations, inline styles
 grep -nE "^\s*(filter|backdrop-filter|transition|animation)[a-z-]*\s*:" papieren/src/content.css papieren/popup/popup.css
 grep -rn "\.style\." papieren/src papieren/popup
@@ -135,6 +135,50 @@ Mode "Show only the ticked countries".
 | 9.4 | L | S4. | Both commands print nothing. |
 | 9.5 | L | Close every x.com tab, the popup and the service worker console, and wait a minute. | The Papieren card in `brave://extensions` reads "service worker (Inactive)", and Task Manager has no Papieren service worker row. |
 
+## Database (`specs/papieren-database`)
+
+Every D row runs on **L**. The database lives in the extension's own origin: its IndexedDB is under the worker console's Application tab (or the popup's: right-click it, Inspect), never under x.com's.
+
+Database helpers, pasted into the worker console after the Setup ones. `rows` and `put` open the database, so use them **only with the switch on**: with it off they would create the very database D1.1 and D1.2 expect absent. Seeded rows are invented: clean up with the popup's "Delete all" for the kind seeded, or switch off.
+
+```js
+const { db } = Papieren;
+const rows = async (store) => { const out = []; await db.tx([store], 'readonly', (t) => db.each(t, store, null, null, (v) => { out.push(v); })); return out; };
+const put = (store, ...list) => db.tx([store], 'readwrite', (t) => Promise.all(list.map((r) => db.put(t, store, r))));
+const ago = (days) => Date.now() - days * 864e5;
+const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
+  if (m?.type === 'db-flush') console.log(new Date().toLocaleTimeString(), 'flush, tab', s.tab?.id, m.memory.length, 'memory', m.history.length, 'history');
+});
+```
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| D1.1 | L | 3.6's fresh install, open the popup. | "Keep a local database" unticked; the four detections unticked and greyed out with Retention (30, 3, 7, 90) and export; no `papieren` database in IndexedDB. |
+| D1.2 | L | Switch off. Browse `/home` and a conversation for a few minutes. | Filtering as before (1.1 and 5.4 still pass), no detection rows in the popup, no `papieren` database in IndexedDB. |
+| D1.3 | L | Switch off: `seed('Z', 'France', { t: ago(31) })` and count `Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith('c:')).length`. Tick the switch, close and reopen the popup, count again. | `await peek('c:z')` is `undefined` (past the 30-day Retention) and the count is one less: every other entry stayed. |
+| D1.4 | L | Switch on, scroll a while, untick the switch. Cancel. Untick again: "Export everything first", then "Switch off and delete". | The box stays ticked while the panel is open and Cancel changes nothing. The export saves `papieren-database-<date>.json`; afterwards the `papieren` database is gone, the `c:` count is unchanged and the controls are greyed out. |
+| D2.1 | L | Retention, hidden history: type 400 and Tab, then empty the field and Tab, then 2.5 and Tab, then 14 and Tab. Reopen the popup. | The first three snap back to the saved value; 14 stays, and `(await peek('settings')).db.keep.history` is 14. |
+| D2.3 | L | Hidden history Retention 1. `await put('history', { day: '2026-01-01', tweet: '1', handle: 'seeded', page: 'home', rule: 'country', revealed: false, t: ago(2) })`. Close and reopen the popup. | `(await rows('history')).filter((r) => r.handle === 'seeded')` is `[]`: the popup-open sweep removed it. |
+| D2.4 | L | "Delete all" beside Hidden history: click once and Tab away; then click twice. | One click reads "Click again to delete" and deletes nothing; Tab restores "Delete all"; two clicks read `Deleted the whole hidden history.` and `(await rows('history')).length` is 0. |
+| D2.5 | Unit | 100 MB is not reachable by hand: `test/records.test.js` covers the share, the headless run of task 4 the sweep's cap path. | |
+| D3.1 | L | Copy-paste replies on. A conversation where several accounts post the same reply (giveaway and crypto threads), wait 5 s. | Once a third author posts it, every copy reads `Hidden: @x · copy-paste reply, N accounts (click to show)`. `(await rows('memory')).some((r) => 'text' in r)` is `false`, and every `copy` row's key is 16 hex characters. If no such thread turns up, `test/content.test.js` covers it. |
+| D3.2 | Unit | Replies everywhere: 5 conversations in 24 h is impractical to stage; `test/memory.test.js` and `test/content.test.js` cover it. | |
+| D3.3 | L | Recycled media on. Scroll a feed with images, wait 5 s. Pick a row of `(await rows('memory')).filter((r) => r.kind === 'media')` whose @handle is on screen as `m`. `await put('memory', ...['901', '902'].map((a, i) => ({ kind: 'media', key: m.key, author: a, handle: 'seeded' + i, tweet: String(i + 1), t: Date.now() })))`, `await put('flags', { kind: 'media', key: m.key, n: 3, first: '1', t: Date.now() })`. F5. | The picked post reads `Hidden: @handle · recycled media, 3 accounts (click to show)`: the seeded tweets 1 and 2 are older, so it is not the earliest. |
+| D3.4 | Unit | Repeat offender needs 5 hides by the other detections; `test/memory.test.js` and `test/content.test.js` cover it. | |
+| D3.5 | L | With D3.3's post hidden, untick Recycled media; tick it again. | The post comes back and hides again, without a reload. |
+| D3.7 | L | S1 and S2 after D3.3. | Unchanged: no image download, no new host. |
+| D3.8 | L | All four detections on. Scroll the Following timeline and a conversation where accounts you follow reply, wait 5 s. `new Set((await rows('memory')).map((r) => r.handle))`. | No handle of an account you follow. One there means the follow flag is read from the wrong field. |
+| D4.1 | L | Switch on, 1.1's France hide on `/home`, wait 5 s, `(await rows('history')).length`. F5 without scrolling, wait 5 s, count again. | The same count; every row's `page` is `home`, `status` or `search`, and its `rule` is `country` or `bm:<detection>`. |
+| D4.2 | L | After D4.1, `await rows('stats')`. | Today's `country` row with `judged` at least `hid`, and `hid` above 0. |
+| D4.3 | L | Click one of D4.1's placeholders, wait 5 s. | That tweet's history row has `revealed: true`. |
+| D5.1 | L | Export JSON. Open it in a text editor. | `papieren` (the version), `exported` (an ISO time), `retention`, and the `cache`, `memory`, `history` and `stats` arrays. |
+| D5.2 | L | Export CSV for each of the four kinds. Open each in LibreOffice Calc. | One column per header field, no cell read as a formula, and the last three columns `exported`, `version`, `retention_days`. |
+| D6.2 | L | With D3.3's post hidden, open the popup. | "Hidden on this page" lists `Recycled media 1` under the country rows, first column headed Reason. |
+| D7.1 | L | S1, S2 and S3 with the switch on; the worker's and popup's Network tabs through D4 and D5. | S1 and S2 as in 4.1 and 4.2, S3 prints nothing, and no request leaves the extension. |
+| D7.2 | L | Switch on, D3.3's post hidden. `await chrome.storage.session.set({ dbError: 'test' })`, F5 the x.com tab, open the popup. Then tick and untick Pause. | The popup reads `Database unavailable (test): running as if switched off.`, the behaviour hide is gone and country hides stay. After Pause on and off the line is gone and the post hides again, without a reload. |
+| D7.3 | L | `watch()`, scroll `/home` for a minute; switch to another tab for 30 s; come back. | Flushes from one tab are at least 5 s apart; at most one flush as the tab is hidden, none while it stays hidden. |
+| D7.4 | L | 9.1 with the switch and all four detections on. | B minus A is at most 50 MB. |
+
 ## Beyond the criteria
 
 | Check | Run | Do | Pass when |
@@ -146,9 +190,12 @@ Mode "Show only the ticked countries".
 - Rebuilt app, logged in: repost markup, timeline payloads and lookups are unverified until the burner trial.
 - A reposted original seen on its own may be hidden for the reposter's country (an earlier decision).
 - The GraphQL "query not found" form of OpNotFound is not handled (`ponytail:` in the code).
+- The D3 detections read payload fields that a private ticket has not yet checked against X: a detection that never fires may be a renamed field (PayloadDrift), not a bug.
+- The QuotaExceeded sweep-and-retry of `db-flush` is untested by hand and by unit test.
 
 ## Run log
 
 | Date | App | Account | Checks run | Failures |
 |---|---|---|---|---|
 | 2026-11-13 | legacy | main | 1.1, 1.2, 1.3, 1.4, 1.5 (profile half), 5.1, 5.2, 5.3, 5.4, 7.4, 7.5, 8.4, 8.5; S1 to S4 from the shell | none |
+| 2026-11-15 | legacy | main | D1.2; before the D rows were written, the popup with the switch on: a detection ticked, Export JSON and one CSV, a Retention change, "Delete all" on two clicks, then D1.4's switch-off with the database gone | none |
