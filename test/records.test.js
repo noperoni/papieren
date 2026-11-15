@@ -94,10 +94,10 @@ test('parseFlush: stored rows in the design\'s field order, malformed rows dropp
   assert.deepEqual(out.stats, [{ rule: 'country', judged: 3, hid: 1 }]);
 });
 
-test('parseFlush: an offence for a country hide or for the offender detection is dropped', () => {
+test('parseFlush: an offence for a country or Pack hide, or for the offender detection, is dropped', () => {
   const offence = (tweet, rule) => ({ kind: 'offence', author: '4', handle: 'd', tweet, rule, t: NOW });
   const out = parseFlush({ memory: [offence('1', 'country'), offence('2', 'bm:offender'), offence('3', 'bm:media'), offence('4', 'pack:x')] }, NOW);
-  assert.deepEqual(out.memory.map((r) => r.key), ['3', '4']);
+  assert.deepEqual(out.memory.map((r) => r.key), ['3']);
 });
 
 test('keepRow: a new key as it is, the newer t wins, a media row keeps the earlier tweet', () => {

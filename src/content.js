@@ -3,7 +3,7 @@
 // content.css, and runs this tab's lookup queue. Talks to the page hook in
 // JSON strings over DOM events, and to the worker for permits.
 (() => {
-  const { settings: Settings, rules, xParse, variants, feed, memory } = globalThis.Papieren;
+  const { settings: Settings, signals, rules, xParse, variants, feed, memory } = globalThis.Papieren;
   const TO_PAGE = 'papieren:to-page';
   const FROM_PAGE = 'papieren:from-page';
   const VARIANTS = new Set(['legacy', 'rebuilt']);
@@ -95,8 +95,9 @@
     return out;
   }
 
+  // What each active Signal counts as judged: its own id unless it names its rules.
   const activeRules = () => [
-    ...(settings.mode === 'allow' || settings.countries.length > 0 ? ['country'] : []),
+    ...signals.all().filter((s) => s.active(settings)).flatMap((s) => s.rules?.(settings) ?? [s.id]),
     ...DETECTIONS.filter((d) => settings.db[d]).map((d) => `bm:${d}`),
   ];
 
@@ -110,13 +111,13 @@
       hidToday.clear();
     }
     if (once(judgedToday, id)) for (const rule of activeRules()) bump(rule, 'judged');
-    const rule = verdict.why === 'match' ? 'country' : hit?.rule;
+    const rule = verdict.why === 'match' ? verdict.rule : hit?.rule;
     if (!rule || !once(hidToday, id)) return;
     bump(rule, 'hid');
-    const handle = rule === 'country' ? verdict.handle : hit.handle;
+    const handle = verdict.why === 'match' ? verdict.handle : hit.handle;
     push('history', { tweet: id, handle, page: feed.pageKind(location.pathname), rule, t: now });
-    // A Repeat_Offender counts neither country hides nor its own (Glossary).
-    if (rule !== 'country' && rule !== 'bm:offender' && settings.db.offender) {
+    // A Repeat_Offender counts behaviour hides only, never its own (Glossary; packs design).
+    if (rule.startsWith('bm:') && rule !== 'bm:offender' && settings.db.offender) {
       sight({ kind: 'offence', key: id, author: refs.author.id, handle: refs.author.handle, rule, t: now });
     }
   }
@@ -214,6 +215,9 @@
       const now = Date.now();
       for (const [v, id] of own) if (!tweets.has(id)) sightings(v, id, settings.db, now).forEach(sight);
     }
+    // The Signals' intake work, off the mutation path (packs design: scoring at intake).
+    const records = [...own.keys()];
+    for (const s of signals.all()) s.prepare?.(records, { settings });
     feed.remember(tweets, found);
     markAll();
   }
@@ -315,11 +319,10 @@
       viewerId: viewer.id,
       lookupsStopped: stopped || !settings.lookups,
     };
-    const verdict = rules.evaluate({ author: state(refs.author), reposter: state(refs.reposter) }, ctx);
+    const verdict = rules.evaluate({ author: state(refs.author), reposter: state(refs.reposter), facts: refs.facts }, ctx);
 
     // Spend lookups only where an answer can change what is shown.
-    const useful = ctx.filteredPage && !ctx.isFocal && !settings.paused
-      && (settings.mode === 'allow' || settings.countries.length > 0);
+    const useful = ctx.filteredPage && !ctx.isFocal && !settings.paused && signals.get('country').active(settings);
     const now = Date.now();
     const isViewer = (r) => viewer.id !== undefined && state(r).id === viewer.id;
     const need = useful ? [refs.author, refs.reposter].filter((r) => r && !isViewer(r) && !feed.fresh(entryOf(r), now)) : [];
@@ -341,8 +344,8 @@
       hiddenHere.delete(post.tweetId);
       return clear(cell);
     }
-    const entry = verdict.hide ? cache.get(verdict.handle.toLowerCase()) : undefined;
-    if (verdict.why === 'match') hiddenHere.set(post.tweetId, { rule: 'country', country: verdict.country, k: entry?.k });
+    const entry = verdict.rule === 'country' ? cache.get(verdict.handle.toLowerCase()) : undefined;
+    if (verdict.why === 'match') hiddenHere.set(post.tweetId, entry ? { rule: 'country', country: verdict.country, k: entry.k } : { rule: verdict.rule });
     else if (hit) hiddenHere.set(post.tweetId, { rule: hit.rule });
     else hiddenHere.delete(post.tweetId);
     const mark = revealed.has(post.tweetId) ? 'revealed' : !hit && verdict.why === 'checking' ? 'checking' : 'hidden';
@@ -491,7 +494,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== 'stats') return false;
-    sendResponse({ layout: adapter?.id ?? null, byCountry: feed.stats(hiddenHere.values()), byDetection: feed.byDetection(hiddenHere.values()) });
+    sendResponse({ layout: adapter?.id ?? null, byCountry: feed.stats(hiddenHere.values()), byRule: feed.byRule(hiddenHere.values()) });
     return false;
   });
 

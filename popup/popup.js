@@ -146,7 +146,7 @@
     const rows = !stats ? [] : [
       ...countRows(stats.byCountry).map((r) => [r.country, r.n,
         [r.confirmed && `${r.confirmed} confirmed`, r.flagged && `${r.flagged} flagged`].filter(Boolean).join(', ')]),
-      ...detectionRows(stats.byDetection).map((r) => [r.name, r.n, '']),
+      ...detectionRows(stats.byRule).map((r) => [r.name, r.n, '']),
     ];
     $('counts').tBodies[0].replaceChildren(...rows.map((cells) => {
       const tr = document.createElement('tr');

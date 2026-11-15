@@ -10,7 +10,10 @@ const { createHash } = require('node:crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
-const LIBS = ['lib/settings.js', 'lib/rules.js', 'lib/x-parse.js', 'lib/variants.js', 'lib/feed.js', 'lib/memory.js'].map(read);
+// The content-script libraries in manifest order, so a new one is never missed here.
+const MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+const LIBS = MANIFEST.content_scripts.find((c) => c.js.includes('src/content.js')).js
+  .filter((f) => f !== 'src/content.js').map((f) => read(f.replace(/^src\//, '')));
 const CONTENT = read('content.js');
 const ABOUT = fs.readFileSync(path.join(__dirname, 'fixtures', 'about-legacy.json'), 'utf8');
 // SHA-256 resolved in one microtask. node's crypto.subtle digests on the
@@ -165,7 +168,7 @@ test('block mode hides a listed country with its label; a click reveals it until
   await settle();
   assert.equal(cell.dataset.papieren, 'hidden');
   assert.equal(cell.dataset.papierenLabel, 'Hidden: @Ivan_Example · Russia · confirmed (click to show)');
-  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } }, byDetection: {} });
+  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } }, byRule: {} });
 
   t.click(cell);
   assert.equal(cell.dataset.papieren, 'revealed');
@@ -338,7 +341,7 @@ test('copy-paste: three Authors with one text hide with the count; the flush car
   assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
   assert.equal(cells[0].dataset.papierenLabel, 'Hidden: @a0 · copy-paste reply, 3 accounts (click to show)');
   assert.equal(ivan.dataset.papieren, 'hidden');
-  assert.deepEqual((await t.stats()).byDetection, { 'bm:copy': 3 });
+  assert.deepEqual((await t.stats()).byRule, { 'bm:copy': 3 });
   t.click(cells[0]);
 
   await hide(t);

@@ -30,12 +30,13 @@
     return e;
   }
 
-  // One line naming the handle and country (Req 5.1), with the confidence
-  // mark when there is one (Req 8.4).
+  // One line naming the handle and what matched (Req 5.1, packs Req 7.1), with
+  // the confidence mark only on a country match (Req 8.4).
   function label(verdict, entry) {
     if (verdict.why === 'checking') return `Checking @${verdict.handle}'s country (click to show)`;
-    const mark = entry?.k === 'confirmed' || entry?.k === 'flagged' ? ` · ${entry.k}` : '';
-    return `Hidden: @${verdict.handle} · ${verdict.country}${mark} (click to show)`;
+    const k = verdict.rule === 'country' ? entry?.k : undefined;
+    const mark = k === 'confirmed' || k === 'flagged' ? ` · ${k}` : '';
+    return `Hidden: @${verdict.handle} · ${verdict.label}${mark} (click to show)`;
   }
 
   // What one lookup answer means (design: Lookup errors). res is the hook's
@@ -96,14 +97,15 @@
     return by;
   }
 
-  // Behaviour hides on this page by rule, for the popup (database Req 6.2).
-  function byDetection(hidden) {
+  // Hides on this page by every rule but country, for the popup (database
+  // Req 6.2, packs Req 7.4).
+  function byRule(hidden) {
     const by = {};
-    for (const { rule } of hidden) if (rule?.startsWith('bm:')) by[rule] = (by[rule] ?? 0) + 1;
+    for (const { rule } of hidden) if (rule && rule !== 'country') by[rule] = (by[rule] ?? 0) + 1;
     return by;
   }
 
-  const feed = { cacheKey, fresh, authorState, entryOf, label, outcome, enqueue, remember, viewerIdFrom, pageKind, stats, byDetection };
+  const feed = { cacheKey, fresh, authorState, entryOf, label, outcome, enqueue, remember, viewerIdFrom, pageKind, stats, byRule };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.feed = feed;

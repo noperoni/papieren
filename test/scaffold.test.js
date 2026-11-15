@@ -7,7 +7,10 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const libDir = path.join(root, 'src', 'lib');
-const libs = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'));
+// Libs others read at load go first, as in the manifest, popup and worker order.
+const FIRST = ['signals.js', 'memory.js'];
+const libs = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'))
+  .sort((a, b) => FIRST.includes(b) - FIRST.includes(a));
 
 test('require() returns the namespace the lib registered on globalThis.Papieren', () => {
   const rules = require('../src/lib/rules.js');

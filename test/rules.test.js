@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { evaluate } = require('../src/lib/rules.js');
+require('../src/signals/country.js');
 
 const SHOW = { hide: false };
 const author = (handle, country, id) => ({ id, handle, country });
@@ -32,18 +33,18 @@ test('no identifiable author leaves the post visible (Req 7.5)', () => {
 
 test('block: listed country hides, unlisted shows', () => {
   assert.deepEqual(evaluate({ author: author('ivan', 'Russia') }, ctx()),
-    { hide: true, why: 'match', handle: 'ivan', country: 'Russia' });
+    { hide: true, why: 'match', rule: 'country', handle: 'ivan', label: 'Russia', country: 'Russia' });
   assert.deepEqual(evaluate({ author: author('joe', 'United States') }, ctx()), SHOW);
 });
 
 test('block: a listed region matches by its label (Req 1.4)', () => {
   assert.deepEqual(evaluate({ author: author('eu', 'Europe') }, ctx()),
-    { hide: true, why: 'match', handle: 'eu', country: 'Europe' });
+    { hide: true, why: 'match', rule: 'country', handle: 'eu', label: 'Europe', country: 'Europe' });
 });
 
 test('block: null country counts as Unknown (Req 7.4)', () => {
   assert.deepEqual(evaluate({ author: author('anon', null) }, ctx()),
-    { hide: true, why: 'match', handle: 'anon', country: 'Unknown' });
+    { hide: true, why: 'match', rule: 'country', handle: 'anon', label: 'Unknown', country: 'Unknown' });
   assert.deepEqual(evaluate({ author: author('anon', null) }, ctx({}, { countries: [] })), SHOW);
 });
 
@@ -56,11 +57,11 @@ test('block: a repost hides when either author matches (Req 1.6)', () => {
   const clean = author('joe', 'United States');
   const listed = author('ivan', 'Russia');
   assert.deepEqual(evaluate({ author: listed, reposter: clean }, ctx()),
-    { hide: true, why: 'match', handle: 'ivan', country: 'Russia' });
+    { hide: true, why: 'match', rule: 'country', handle: 'ivan', label: 'Russia', country: 'Russia' });
   assert.deepEqual(evaluate({ author: clean, reposter: listed }, ctx()),
-    { hide: true, why: 'match', handle: 'ivan', country: 'Russia' });
+    { hide: true, why: 'match', rule: 'country', handle: 'ivan', label: 'Russia', country: 'Russia' });
   assert.deepEqual(evaluate({ author: author('new', 'pending'), reposter: listed }, ctx()),
-    { hide: true, why: 'match', handle: 'ivan', country: 'Russia' });
+    { hide: true, why: 'match', rule: 'country', handle: 'ivan', label: 'Russia', country: 'Russia' });
   assert.deepEqual(evaluate({ author: clean, reposter: author('new', 'pending') }, ctx()), SHOW);
 });
 
@@ -69,9 +70,9 @@ test('allow: listed shows, unlisted hides (Req 2.1)', () => {
   c.settings.countries = ['France'];
   assert.deepEqual(evaluate({ author: author('marie', 'France') }, c), SHOW);
   assert.deepEqual(evaluate({ author: author('joe', 'United States') }, c),
-    { hide: true, why: 'match', handle: 'joe', country: 'United States' });
+    { hide: true, why: 'match', rule: 'country', handle: 'joe', label: 'United States', country: 'United States' });
   assert.deepEqual(evaluate({ author: author('anon', null) }, c),
-    { hide: true, why: 'match', handle: 'anon', country: 'Unknown' });
+    { hide: true, why: 'match', rule: 'country', handle: 'anon', label: 'Unknown', country: 'Unknown' });
 });
 
 test('allow: pending is "checking" while lookups run, shown once stopped (Req 2.2, 7.3, 3.9)', () => {
@@ -87,11 +88,11 @@ test('allow: repost hides when either author is unlisted, a known miss beats che
   const us = author('joe', 'United States');
   const pending = author('new', 'pending');
   assert.deepEqual(evaluate({ author: fr, reposter: us }, c()),
-    { hide: true, why: 'match', handle: 'joe', country: 'United States' });
+    { hide: true, why: 'match', rule: 'country', handle: 'joe', label: 'United States', country: 'United States' });
   assert.deepEqual(evaluate({ author: us, reposter: fr }, c()),
-    { hide: true, why: 'match', handle: 'joe', country: 'United States' });
+    { hide: true, why: 'match', rule: 'country', handle: 'joe', label: 'United States', country: 'United States' });
   assert.deepEqual(evaluate({ author: pending, reposter: us }, c()),
-    { hide: true, why: 'match', handle: 'joe', country: 'United States' });
+    { hide: true, why: 'match', rule: 'country', handle: 'joe', label: 'United States', country: 'United States' });
   assert.deepEqual(evaluate({ author: fr, reposter: pending }, c()),
     { hide: true, why: 'checking', handle: 'new', country: 'pending' });
   assert.deepEqual(evaluate({ author: fr, reposter: author('luc', 'France') }, c()), SHOW);
@@ -109,7 +110,7 @@ test('viewer as reposter is not judged, the original author still is', () => {
   c.settings.countries = ['France'];
   assert.deepEqual(evaluate({ author: author('marie', 'France'), reposter: me }, c), SHOW);
   assert.deepEqual(evaluate({ author: author('joe', 'United States'), reposter: me }, c),
-    { hide: true, why: 'match', handle: 'joe', country: 'United States' });
+    { hide: true, why: 'match', rule: 'country', handle: 'joe', label: 'United States', country: 'United States' });
 });
 
 test('no viewer id means no viewer exemption', () => {

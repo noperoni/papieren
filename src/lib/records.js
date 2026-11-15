@@ -46,7 +46,8 @@
   const FLUSH_MAX = 2000;          // rows per list, the tab's buffer cap (Req 7.4)
   const KEY_OF = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet' };
   const PAGES = ['home', 'status', 'search'];
-  const NOT_OFFENCES = ['country', 'bm:offender'];
+  // A Repeat_Offender counts behaviour hides only, never its own (Glossary; packs design).
+  const isOffence = (rule) => rule.startsWith('bm:') && rule !== 'bm:offender';
   const matches = (re) => (v) => typeof v === 'string' && re.test(v);
   const isId = matches(/^\w{1,64}$/);         // ids, fingerprints
   const isHandle = matches(/^\w{1,50}$/);
@@ -65,8 +66,7 @@
       row.tweet = m.tweet;
     }
     if (m.kind === 'offence') {
-      // A Repeat_Offender counts neither country hides nor its own (Glossary).
-      if (!isRule(m.rule) || NOT_OFFENCES.includes(m.rule)) return null;
+      if (!isRule(m.rule) || !isOffence(m.rule)) return null;
       row.rule = m.rule;
     }
     row.t = m.t;
