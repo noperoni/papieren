@@ -35,6 +35,15 @@ test('every file the manifest names exists', () => {
   }
 });
 
+test('every script the popup loads exists, records.js after memory.js', () => {
+  const html = fs.readFileSync(path.join(root, manifest.action.default_popup), 'utf8');
+  const dir = path.dirname(path.join(root, manifest.action.default_popup));
+  const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+  for (const src of srcs) assert.ok(fs.existsSync(path.join(dir, src)), `missing ${src}`);
+  // records.js reads globalThis.Papieren.memory at load.
+  assert.ok(srcs.indexOf('../src/lib/memory.js') > -1 && srcs.indexOf('../src/lib/memory.js') < srcs.indexOf('../src/lib/records.js'));
+});
+
 test('permissions stay at storage plus the X hosts (Req 4.2, 4.4)', () => {
   assert.deepEqual(manifest.permissions, ['storage']);
   assert.deepEqual(manifest.host_permissions, ['https://x.com/*', 'https://api.x.com/*']);

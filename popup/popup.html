@@ -12,7 +12,7 @@
     <h2 id="h-counts">Hidden on this page</h2>
     <p id="counts-note" class="muted"></p>
     <table id="counts" hidden>
-      <thead><tr><th scope="col">Country</th><th scope="col">Posts</th><th scope="col">Marks</th></tr></thead>
+      <thead><tr><th scope="col">Reason</th><th scope="col">Posts</th><th scope="col">Marks</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -52,6 +52,45 @@
     <label>Lookups per 15 minutes <input type="number" id="budget" min="1" max="45" step="1"></label>
   </section>
 
+  <section aria-labelledby="h-db">
+    <h2 id="h-db">Database</h2>
+    <label><input type="checkbox" id="db-on"> Keep a local database</label>
+    <div id="db-off" class="risk" role="group" aria-labelledby="db-off-title" hidden>
+      <p id="db-off-title"><strong>Switching off deletes the database.</strong></p>
+      <p>Behaviour memory, hidden history and statistics are deleted for good. The country cache stays.</p>
+      <button type="button" id="db-off-export">Export everything first</button>
+      <button type="button" id="db-off-confirm">Switch off and delete</button>
+      <button type="button" id="db-off-cancel">Cancel</button>
+    </div>
+    <fieldset id="db-controls">
+      <fieldset id="db-detections">
+        <legend>Hide posts by behaviour</legend>
+        <label><input type="checkbox" value="copy"> Copy-paste replies: the same reply from 3 or more accounts</label>
+        <label><input type="checkbox" value="everywhere"> Replies everywhere: an account in 5 or more conversations in 24 hours</label>
+        <label><input type="checkbox" value="media"> Recycled media: the same image or video from 3 or more accounts, the earliest post kept</label>
+        <label><input type="checkbox" value="offender"> Repeat offenders: an account hidden 5 or more times by the checks above</label>
+      </fieldset>
+      <fieldset id="db-keep">
+        <legend>Keep records for (days)</legend>
+        <div class="row"><label>Country cache <input type="number" data-kind="cache" min="1" max="365" step="1" required></label><button type="button" data-clear="cache">Delete all</button></div>
+        <div class="row"><label>Behaviour memory <input type="number" data-kind="memory" min="1" max="365" step="1" required></label><button type="button" data-clear="memory">Delete all</button></div>
+        <div class="row"><label>Hidden history <input type="number" data-kind="history" min="1" max="365" step="1" required></label><button type="button" data-clear="history">Delete all</button></div>
+        <div class="row"><label>Statistics <input type="number" data-kind="stats" min="1" max="365" step="1" required></label><button type="button" data-clear="stats">Delete all</button></div>
+      </fieldset>
+      <div class="row">
+        <button type="button" id="db-export">Export JSON</button>
+        <select id="db-kind" aria-label="Records to export as CSV">
+          <option value="cache">Country cache</option>
+          <option value="memory">Behaviour memory</option>
+          <option value="history">Hidden history</option>
+          <option value="stats">Statistics</option>
+        </select>
+        <button type="button" id="db-csv">Export CSV</button>
+      </div>
+    </fieldset>
+    <p id="db-note" class="muted" role="status"></p>
+  </section>
+
   <section aria-labelledby="h-file">
     <h2 id="h-file">Settings file</h2>
     <button type="button" id="export">Export</button>
@@ -62,6 +101,9 @@
 
   <script src="../src/lib/settings.js"></script>
   <script src="../src/lib/countries.js"></script>
+  <script src="../src/lib/memory.js"></script>
+  <script src="../src/lib/records.js"></script>
+  <script src="../src/lib/db.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
