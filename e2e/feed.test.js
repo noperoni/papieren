@@ -11,7 +11,9 @@ import { fakeX, post, cellState } from './fakex.js';
 
 const FLUSH = 5000;
 const HEADED = process.env.PAPIEREN_HEADED === '1';
-const today = () => new Date().toISOString().slice(0, 10);
+// The local day, as memory.dayOf names files and rows: the UTC date lags it
+// from midnight to 01:00 in Paris.
+const today = () => new Date().toLocaleDateString('sv-SE');
 
 async function until(fn, what, ms = 8000) {
   const end = Date.now() + ms;

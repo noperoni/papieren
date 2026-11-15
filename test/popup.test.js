@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile } = require('../popup/popup.js');
-const { normalize } = require('../src/lib/settings.js');
+const { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile, settingsFile, importNote } = require('../popup/popup.js');
+const { normalize, parseImport } = require('../src/lib/settings.js');
 
 test('seenCountries: cache entries only, named countries only, once each', () => {
   const all = {
@@ -105,4 +105,20 @@ test('dbFile: JSON of every kind, or one kind as CSV, named by date (database Re
 
   assert.match(dbFile('cache', data).text.split('\n')[1], /^a,India,/);
   assert.equal(dbFile('stats', { ...data, stats: [] }).text.split('\n').length, 2);
+});
+
+test('settingsFile: dated JSON that imports back unchanged (Req 6.4)', () => {
+  const settings = normalize({ mode: 'allow', countries: ['India', 'Peru'], budget: 12 });
+  const file = settingsFile(settings, new Date(2026, 10, 15, 23, 30).getTime());
+  assert.equal(file.name, 'papieren-settings-2026-11-15.json', 'the local day, as the database exports');
+  assert.equal(file.type, 'application/json');
+  assert.ok(file.text.endsWith('}\n'));
+  assert.deepEqual(parseImport(file.text, normalize({})), { ok: true, settings });
+});
+
+test('importNote: mode and country count, and what a file never changes (Req 3.7)', () => {
+  const tail = ' Lookups and the database switch stay as they were.';
+  assert.equal(importNote(normalize({ countries: ['India', 'Peru'] })), `Imported: hide 2 countries.${tail}`);
+  assert.equal(importNote(normalize({ mode: 'allow', countries: ['Peru'] })), `Imported: show only 1 country.${tail}`);
+  assert.equal(importNote(normalize({})), `Imported: hide 0 countries.${tail}`);
 });

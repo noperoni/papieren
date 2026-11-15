@@ -93,10 +93,13 @@
 
   <section aria-labelledby="h-file">
     <h2 id="h-file">Settings file</h2>
-    <button type="button" id="export">Export</button>
-    <button type="button" id="import-btn">Import</button>
+    <p class="muted">Filter, display, lookup and database choices in one file: a backup, or a move to another browser. Records are not in it.</p>
+    <div class="row">
+      <button type="button" id="export">Export settings</button>
+      <button type="button" id="import-btn">Import settings…</button>
+    </div>
     <input type="file" id="import" accept="application/json,.json" hidden>
-    <p id="import-note" class="muted" role="status"></p>
+    <p id="file-note" class="muted" role="status"></p>
   </section>
 
   <script src="../src/lib/settings.js"></script>

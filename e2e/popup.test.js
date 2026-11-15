@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { launch, download, parseCsv } from './harness.js';
 
 const KEEP = { cache: 30, memory: 3, history: 7, stats: 90 };
-const today = () => new Date().toISOString().slice(0, 10);
+// The local day, as memory.dayOf names files and rows: the UTC date lags it
+// from midnight to 01:00 in Paris.
+const today = () => new Date().toLocaleDateString('sv-SE');
 
 async function until(fn, what, ms = 5000) {
   const end = Date.now() + ms;
@@ -269,3 +271,38 @@ for (const [fails, what] of [[1, 'sweeps once and the retry lands'], [2, 'fails 
     }
   });
 }
+
+test('6.4 settings file: dated export, import restores and says what came in', async (tc) => {
+  const b = await fresh(tc);
+  const p = await b.popup();
+  await p.locator('input[name="mode"][value="allow"]').check();
+  await p.locator('#countries input').first().check();
+  await until(() => b.sw(() => t.peek('settings').then((s) => s?.countries?.length === 1)), 'one country saved');
+
+  const file = await download(p, () => p.locator('#export').click());
+  assert.equal(file.name, `papieren-settings-${today()}.json`);
+  assert.equal(await p.locator('#file-note').textContent(), `Exported ${file.name}.`);
+  const saved = JSON.parse(file.text);
+  assert.deepEqual(Object.keys(saved), ['v', 'mode', 'countries', 'placeholder', 'paused', 'lookups', 'budget', 'db']);
+
+  const put = (name, text) => p.locator('#import').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) });
+  const mode = () => b.sw(() => t.peek('settings').then((s) => s.mode));
+  await p.locator('input[name="mode"][value="block"]').check();
+  await until(async () => (await mode()) === 'block', 'block saved');
+
+  await put('bad.json', '{');
+  await until(async () => (await p.locator('#file-note').textContent()) === 'Not imported: The file is not valid JSON.', 'bad JSON refused');
+  await put('bad-mode.json', JSON.stringify({ ...saved, mode: 'x' }));
+  await until(async () => (await p.locator('#file-note').textContent()) === 'Not imported: mode must be "block" or "allow".', 'bad mode refused');
+  assert.equal(await mode(), 'block', 'a refused file changes nothing');
+
+  await put('lookups.json', JSON.stringify({ ...saved, lookups: true, db: { ...saved.db, on: true } }));
+  const want = 'Imported: show only 1 country. Lookups and the database switch stay as they were.';
+  await until(async () => (await p.locator('#file-note').textContent()) === want, 'import note');
+  const after = await b.sw(() => t.peek('settings'));
+  assert.equal(after.mode, 'allow', 'the file restored the mode');
+  assert.deepEqual(after.countries, saved.countries);
+  assert.equal(after.lookups, false, 'an import never switches lookups on');
+  assert.equal(after.db.on, false, 'nor the database');
+  assert.ok(await p.locator('input[name="mode"][value="allow"]').isChecked(), 'the popup shows it');
+});

@@ -75,7 +75,22 @@
     return { name, type: 'text/csv', text: records.toCsv(kind, data[kind], data) };
   }
 
-  const popup = { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile };
+  // The settings export (Req 6.4), named by day like the database exports.
+  const settingsFile = (settings, now) => ({
+    name: `papieren-settings-${records.dayOf(now)}.json`,
+    type: 'application/json',
+    text: `${JSON.stringify(settings, null, 2)}\n`,
+  });
+
+  // What an import brought, in words. Lookups and the database switch never
+  // come from a file (Req 3.7, database Req 1.4), so the note says so.
+  function importNote(settings) {
+    const n = settings.countries.length;
+    const what = `${settings.mode === 'block' ? 'hide' : 'show only'} ${n} ${n === 1 ? 'country' : 'countries'}`;
+    return `Imported: ${what}. Lookups and the database switch stay as they were.`;
+  }
+
+  const popup = { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile, settingsFile, importNote };
   if (typeof module === 'object') {
     module.exports = popup;
     return;
@@ -96,6 +111,7 @@
 
   const el = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
   const note = (text) => { $('db-note').textContent = text; };
+  const fileNote = (text) => { $('file-note').textContent = text; };
   const why = (error) => (error === 'off' ? 'the database is switched off' : `database unavailable (${error})`);
   // A worker that is gone (extension reloaded) rejects; answer like a failure.
   const send = (msg) => chrome.runtime.sendMessage(msg).catch((e) => ({ error: String(e?.message ?? e) }));
@@ -165,12 +181,12 @@
       ? { ok: false, reason: 'The file is too large to be Papieren settings.' }
       : Settings.parseImport(await file.text(), current);
     if (!out.ok) {
-      $('import-note').textContent = `Not imported: ${out.reason}`;
+      fileNote(`Not imported: ${out.reason}`);
       return;
     }
     current = out.settings;
     await chrome.storage.local.set({ settings: current });
-    $('import-note').textContent = 'Imported.';
+    fileNote(importNote(current));
     renderList();
     render();
   }
@@ -180,7 +196,11 @@
     Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type })), download: name }).click();
   }
 
-  const exportFile = () => download('papieren-settings.json', 'application/json', `${JSON.stringify(current, null, 2)}\n`);
+  function exportFile() {
+    const file = settingsFile(current, Date.now());
+    download(file.name, file.type, file.text);
+    fileNote(`Exported ${file.name}.`);
+  }
 
   // Every row of the named IndexedDB stores, in one read-only transaction.
   async function readStores(stores) {
