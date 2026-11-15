@@ -73,6 +73,8 @@
     if (bio) ref.bio = bio.slice(0, BIO_MAX);
     // X's own record that the viewer follows this user (database Req 3.8).
     // ponytail: both known places; keep the one a captured payload shows.
+    // relationship_perspectives is where legacy X puts it (2026-11-15); legacy.following
+    // was in no capture and stays for the rebuilt app's payloads until the burner trial says.
     if (user.relationship_perspectives?.following === true || user.legacy?.following === true) ref.followed = true;
     return ref;
   }

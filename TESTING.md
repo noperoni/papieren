@@ -139,7 +139,7 @@ Mode "Show only the ticked countries".
 
 Every D row runs on **L**. The database lives in the extension's own origin: its IndexedDB is under the worker console's Application tab (or the popup's: right-click it, Inspect), never under x.com's.
 
-**Automated (2026-11-15).** Every D row but D7.4 also runs headless in `papieren/e2e/`, its own package so `papieren/package.json` stays dependency-free: `cd papieren/e2e; npm install; npm test` (about 80 s). `popup.test.js` covers the rows that need only the popup and the worker; `feed.test.js` runs the feed rows against `fakex.js`, a routed x.com that answers every request itself, so nothing reaches X. The fake is only as true to X as the unit-test payloads are, which makes D3.8's follow flag provisional until a private ticket. Headless Chromium never hides a tab, so the second half of D7.3 runs only with `env PAPIEREN_HEADED=1 npm test`, which opens a window. D7.4 stays manual. A green run stands in for the L rows it covers. What it cannot show is real X drift, which is the live run's job.
+**Automated (2026-11-15).** Every D row but D7.4 also runs headless in `papieren/e2e/`, its own package so `papieren/package.json` stays dependency-free: `cd papieren/e2e; npm install; npm test` (about 80 s). `popup.test.js` covers the rows that need only the popup and the worker; `feed.test.js` runs the feed rows against `fakex.js`, a routed x.com that answers every request itself, so nothing reaches X. The fake is only as true to X as the unit-test payloads are; a private ticket checked their field names against real captures. Headless Chromium never hides a tab, so the second half of D7.3 runs only with `env PAPIEREN_HEADED=1 npm test`, which opens a window. Every headed run is a plain Chromium attached over CDP, because Playwright's own launch keeps every page visible behind any other tab. D7.4 stays manual. A green run stands in for the L rows it covers. What it cannot show is real X drift, which is the live run's job: `npm run login` once, then `npm run live`, headed on the burner profile `e2e/.profiles/burner` (never the main account), lookups off, storage wiped before and after. It runs 1.1, D3.3, D3.5, D3.7, D3.8, D4.1 to D4.3, D6.2 and D7.1 to D7.3 on real x.com in about 90 s, and saves X's first timeline and conversation answers to `~/papieren-capture/`, outside the repo.
 
 Database helpers, pasted into the worker console after the Setup ones. `rows` and `put` open the database, so use them **only with the switch on**: with it off they would create the very database D1.1 and D1.2 expect absent. Seeded rows are invented: clean up with the popup's "Delete all" for the kind seeded, or switch off.
 
@@ -192,7 +192,7 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 - Rebuilt app, logged in: repost markup, timeline payloads and lookups are unverified until the burner trial.
 - A reposted original seen on its own may be hidden for the reposter's country (an earlier decision).
 - The GraphQL "query not found" form of OpNotFound is not handled (`ponytail:` in the code).
-- The D3 detections read payload fields that a private ticket has not yet checked against X: a detection that never fires may be a renamed field (PayloadDrift), not a bug.
+- Rule_Statistics count once per tweet per day per tab, so each F5 of a page counts its posts again; the Hidden_History rows do not double.
 - The QuotaExceeded sweep-and-retry of `db-flush` is untested by hand and by unit test.
 
 ## Run log
@@ -201,3 +201,4 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 |---|---|---|---|---|
 | 2026-11-13 | legacy | main | 1.1, 1.2, 1.3, 1.4, 1.5 (profile half), 5.1, 5.2, 5.3, 5.4, 7.4, 7.5, 8.4, 8.5; S1 to S4 from the shell | none |
 | 2026-11-15 | legacy | main | D1.2; before the D rows were written, the popup with the switch on: a detection ticked, Export JSON and one CSV, a Retention change, "Delete all" on two clicks, then D1.4's switch-off with the database gone | none |
+| 2026-11-15 | legacy | burner | `papieren/e2e`: `npm test` (23 pass, D7.3's hidden half skipped headless) and that half headed; `npm run live`, 6 of 6, follow flag seen 299 times in `relationship_perspectives`, never in `legacy` | none in Papieren; the live script's first contact needed fixes (Following holds only followed accounts, x.com's own service worker, focus emulation, popup tab in front) |
