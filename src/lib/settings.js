@@ -101,8 +101,8 @@
   // since neither changes what the file meant. An import never switches
   // lookups on: that takes the popup's risk confirmation (Req 3.7). A file
   // without db keeps the current block.
-  // A packs block keeps only the ids in packIds, the Packs that exist here;
-  // a file without one keeps the current block.
+  // A packs block keeps only the ids in packIds, the Packs that exist here,
+  // and names the rest in `dropped`; a file without one keeps the current block.
   function parseImport(text, current, packIds = []) {
     const reject = (reason) => ({ ok: false, reason });
     let raw;
@@ -126,8 +126,10 @@
     const cur = normalize(current);
     const db = 'db' in raw ? raw.db : cur.db;
     const known = new Set(packIds);
-    const packs = 'packs' in raw ? { ...raw.packs, on: (raw.packs.on ?? []).filter((id) => known.has(id)) } : cur.packs;
-    return { ok: true, settings: normalize({ ...raw, lookups: cur.lookups, db, packs }) };
+    const listed = [...new Set('packs' in raw ? raw.packs.on ?? [] : [])];
+    const packs = 'packs' in raw ? { ...raw.packs, on: listed.filter((id) => known.has(id)) } : cur.packs;
+    const dropped = listed.filter((id) => !known.has(id));
+    return { ok: true, settings: normalize({ ...raw, lookups: cur.lookups, db, packs }), dropped };
   }
 
   const settings = { DEFAULTS, DETECTIONS, normalize, parseImport };

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  MAX_FILE, fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score,
+  MAX_FILE, fold, checkPattern, validate, merge, tellCount, parseLines, toLines, visible, measure, compile, score,
 } = require('../src/lib/packs.js');
 
 const pack = (over = {}) => ({
@@ -183,6 +183,21 @@ test('validate: at most 300 Tells over tells and every language (Req 5.5)', () =
   const text = (n) => Array.from({ length: n }, (_, i) => ({ w: 1, on: 'text', phrase: `p${i}` }));
   assert.equal(validate(pack({ tells: ctx(100), languages: { en: text(100), fr: text(100) } })).ok, true);
   assert.match(refused(pack({ tells: ctx(101), languages: { en: text(100), fr: text(100) } })), /More than 300 tells/);
+});
+
+test('merge: built-ins first, then user Packs in stored order; bad, repeated or built-in ids left out', () => {
+  const builtin = [pack({ id: 'b1' }), pack({ id: 'b1', name: 'Again' }), pack({ id: 'broken', threshold: 0 })];
+  const user = [pack({ id: 'u2' }), pack({ id: 'b1', name: 'Mine' }), pack({ id: 'u1' }), pack({ id: 'u2', name: 'Again' })];
+  const out = merge(builtin, user);
+  assert.deepEqual(out.map((p) => [p.id, p.name]), [['b1', 'Bait'], ['u2', 'Bait'], ['u1', 'Bait']]);
+  assert.deepEqual(merge(undefined, 'not a list'), []);
+});
+
+test('tellCount: tells and every language (Req 4.3)', () => {
+  const t = { w: 1, on: 'text', phrase: 'x' };
+  assert.equal(tellCount(pack()), 0);
+  const r = validate(pack({ tells: [{ w: 1, on: 'name', phrase: 'x' }], languages: { en: [t, { ...t, phrase: 'y' }], fr: [t] } }));
+  assert.equal(tellCount(r.pack), 4);
 });
 
 // ---- 4.2 parseLines, toLines ----

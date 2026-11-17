@@ -93,26 +93,12 @@
   let version = 0;
   let enabled = { key: undefined, list: [] };
 
-  function clean(list, opts, seen) {
-    const out = [];
-    for (const p of Array.isArray(list) ? list : []) {
-      const r = lib.validate(p, opts);
-      // A stored Pack that fails is left out of matching (Error Handling).
-      if (r.ok && !seen.has(r.pack.id)) {
-        seen.add(r.pack.id);
-        out.push(r.pack);
-      }
-    }
-    return out;
-  }
-
   // content.js hands in each key of `keys` at boot and on every change.
+  // A stored Pack that fails is left out of matching (Error Handling).
   function stored(key, value) {
     if (!(key in raw)) return;
     raw[key] = value;
-    const seen = new Set();
-    const builtin = clean(raw['packs:builtin'], { builtin: true }, seen);
-    packs = [...builtin, ...clean(raw['packs:user'], { builtinIds: [...seen] }, seen)];
+    packs = lib.merge(raw['packs:builtin'], raw['packs:user']);
     version += 1;
   }
 

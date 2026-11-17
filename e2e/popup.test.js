@@ -232,7 +232,7 @@ test('6.4 settings file: dated export, import restores and says what came in', a
 
   // An export from before the database became required carries the database switch: it imports, the key dropped.
   await put('lookups.json', JSON.stringify({ ...saved, lookups: true, db: { ...saved.db, on: false } }));
-  const want = 'Imported: show only 1 country. Lookups stay as they were.';
+  const want = 'Imported: show only 1 country, 0 packs on. Lookups stay as they were.';
   await until(async () => (await p.locator('#file-note').textContent()) === want, 'import note');
   const after = await b.sw(() => t.peek('settings'));
   assert.equal(after.mode, 'allow', 'the file restored the mode');
@@ -240,4 +240,27 @@ test('6.4 settings file: dated export, import restores and says what came in', a
   assert.equal(after.lookups, false, 'an import never switches lookups on');
   assert.equal('on' in after.db, false, 'the old database switch is dropped');
   assert.ok(await p.locator('input[name="mode"][value="allow"]').isChecked(), 'the popup shows it');
+});
+
+test('packs section: a row per built-in, a tick and the mode saved, an import names Packs not here (packs Req 4.3)', async (tc) => {
+  const b = await fresh(tc);
+  await until(() => b.sw(() => t.peek('packs:builtin').then((l) => l?.length === 4)), 'built-ins copied');
+  const p = await b.popup();
+  assert.equal(await p.locator('#packs label').count(), 4);
+  assert.match(await p.locator('#pack-line-ragebait').textContent(), /^Junk · .+ · threshold 6 · \d+ tells$/);
+  assert.equal(await p.locator('#packs input:checked').count(), 0, 'installed with every Pack off (Req 4.2)');
+
+  await p.locator('#packs input[value="ragebait"]').check();
+  await p.locator('input[name="pack-mode"][value="allbut"]').check();
+  const packs = () => b.sw(() => t.peek('settings').then((s) => s?.packs));
+  await until(async () => JSON.stringify(await packs()) === '{"mode":"allbut","on":["ragebait"]}', 'packs saved');
+
+  const file = { v: 1, mode: 'block', countries: [], packs: { mode: 'block', on: ['ai-tone', 'mine'] } };
+  await p.locator('#import').setInputFiles({ name: 'p.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  const want = 'Imported: hide 0 countries, 1 pack on. Not here, so left off: mine. Lookups stay as they were.';
+  await until(async () => (await p.locator('#file-note').textContent()) === want, 'import note');
+  assert.deepEqual(await packs(), { mode: 'block', on: ['ai-tone'] });
+  assert.ok(await p.locator('#packs input[value="ai-tone"]').isChecked(), 'the popup shows it');
+  assert.equal(await p.locator('#packs input[value="ragebait"]').isChecked(), false);
+  assert.ok(await p.locator('input[name="pack-mode"][value="block"]').isChecked());
 });

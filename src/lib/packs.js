@@ -241,6 +241,24 @@
     return { ok: true, pack: { ...pack, tells, languages } };
   }
 
+  // The stored lists -> every valid Pack, built-ins first, then user Packs,
+  // each in stored order. A Pack that fails, or repeats an id, is left out
+  // (Error Handling); a user Pack may not take a built-in's id.
+  function merge(builtin, user) {
+    const seen = new Set();
+    const clean = (list, opts) => (Array.isArray(list) ? list : []).flatMap((p) => {
+      const r = validate(p, opts);
+      if (!r.ok || seen.has(r.pack.id)) return [];
+      seen.add(r.pack.id);
+      return [r.pack];
+    });
+    const b = clean(builtin, { builtin: true });
+    return [...b, ...clean(user, { builtinIds: b.map((p) => p.id) })];
+  }
+
+  // Req 4.3: every Tell, language-independent and per language.
+  const tellCount = (pack) => Object.values(pack.languages).reduce((n, l) => n + l.length, pack.tells.length);
+
   // ---- parseLines, toLines: the editor's line syntax (Req 5.2, 5.4) ----
 
   // `#` at the start of a line, or after whitespace and before whitespace or
@@ -508,7 +526,7 @@
 
   const packs = {
     KINDS, MEASURES, MEDIA, CONTEXTS, ACCOUNT, MAX_TELLS, MAX_FILE,
-    fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score, accountScore,
+    fold, checkPattern, validate, merge, tellCount, parseLines, toLines, visible, measure, compile, score, accountScore,
   };
 
   globalThis.Papieren ??= {};

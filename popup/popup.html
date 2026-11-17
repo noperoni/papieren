@@ -29,6 +29,18 @@
     <div id="countries" class="countries" role="group" aria-label="Countries"></div>
   </section>
 
+  <section aria-labelledby="h-packs">
+    <h2 id="h-packs">Packs</h2>
+    <fieldset>
+      <legend>Mode</legend>
+      <label><input type="radio" name="pack-mode" value="block"> Hide posts my packs match</label>
+      <label><input type="radio" name="pack-mode" value="allbut"> Show only posts my packs match</label>
+    </fieldset>
+    <div id="packs" class="packs" role="group" aria-label="Packs"></div>
+    <p id="packs-note" class="muted"></p>
+    <button type="button" id="edit-packs">Edit packs…</button>
+  </section>
+
   <section aria-labelledby="h-display">
     <h2 id="h-display">Display</h2>
     <fieldset>
@@ -85,7 +97,7 @@
 
   <section aria-labelledby="h-file">
     <h2 id="h-file">Settings file</h2>
-    <p class="muted">Filter, display, lookup and database choices in one file: a backup, or a move to another browser. Records are not in it.</p>
+    <p class="muted">Filter, pack, display, lookup and database choices in one file: a backup, or a move to another browser. Records are not in it, and neither are your own packs: export those from Edit packs.</p>
     <div class="row">
       <button type="button" id="export">Export settings</button>
       <button type="button" id="import-btn">Import settings…</button>
@@ -99,6 +111,7 @@
   <script src="../src/lib/memory.js"></script>
   <script src="../src/lib/records.js"></script>
   <script src="../src/lib/db.js"></script>
+  <script src="../src/lib/packs.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

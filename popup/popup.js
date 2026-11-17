@@ -1,10 +1,13 @@
 // Popup: settings, the lookups switch, status and per-country counts
-// (Req 3.6, 3.7, 5.4, 6.1-6.4, 7.1, 8.4), and the Database section (database
-// design, Popup). The pure helpers are exported for node --test; the DOM
+// (Req 3.6, 3.7, 5.4, 6.1-6.4, 7.1, 8.4), the Packs section (packs design,
+// Popup) and the Database section (database design, Popup). The pure helpers are exported for node --test; the DOM
 // wiring below them runs only in the popup.
 (() => {
   const records = globalThis.Papieren?.records ?? require('../src/lib/records.js');
+  const packsLib = globalThis.Papieren?.packs ?? require('../src/lib/packs.js');
   const MAX_IMPORT_BYTES = 100_000;
+  const KINDS = { junk: 'Junk', topic: 'Topic' };
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
   // Behaviour rules as the counts table names them, in the settings' order.
   const DETECTION_NAMES = {
@@ -49,6 +52,28 @@
       .filter((r) => r.n > 0);
   }
 
+  // One row per Pack in list order, with the muted line Req 4.3 asks for. A
+  // Pack_Copy names its built-in, or the built-in's id if a release dropped it.
+  function packRows(list, on) {
+    const names = new Map(list.map((p) => [p.id, p.name]));
+    const enabled = new Set(on);
+    return list.map((p) => {
+      const bits = [KINDS[p.kind], p.description, `threshold ${p.threshold}`, plural(packsLib.tellCount(p), 'tell')];
+      if (p.from) bits.push(`copy of ${names.get(p.from.id) ?? p.from.id} v${p.from.version}`);
+      return { id: p.id, name: p.name, on: enabled.has(p.id), line: bits.join(' · ') };
+    });
+  }
+
+  // Pack hides on this page, each under its Pack's name in list order, then
+  // "Outside your packs" (Req 7.4). A Pack deleted since it hid keeps its id.
+  function packCountRows(byRule, list) {
+    const by = byRule ?? {};
+    const named = list.map((p) => ({ name: p.name, n: by[`pack:${p.id}`] ?? 0 }));
+    const known = new Set(list.map((p) => `pack:${p.id}`));
+    const gone = Object.keys(by).filter((r) => r.startsWith('pack:') && !known.has(r)).map((r) => ({ name: r.slice(5), n: by[r] }));
+    return [...named, ...gone, { name: 'Outside your packs', n: by['packs:outside'] ?? 0 }].filter((r) => r.n > 0);
+  }
+
   // What the badge means, in words, most important first (Req 7.1). budget is
   // the worker's session state; stats is the tab's answer, or null off x.com;
   // dbError is the worker's reason the database failed (database Req 7.2).
@@ -83,14 +108,15 @@
   });
 
   // What an import brought, in words. Lookups never come from a file
-  // (Req 3.7), so the note says so.
-  function importNote(settings) {
-    const n = settings.countries.length;
-    const what = `${settings.mode === 'block' ? 'hide' : 'show only'} ${n} ${n === 1 ? 'country' : 'countries'}`;
-    return `Imported: ${what}. Lookups stay as they were.`;
+  // (Req 3.7), so the note says so; Packs the file names that are not here
+  // stay off, and the note names them.
+  function importNote(settings, dropped = []) {
+    const what = `${settings.mode === 'block' ? 'hide' : 'show only'} ${plural(settings.countries.length, 'country', 'countries')}`;
+    const left = dropped.length ? ` Not here, so left off: ${dropped.join(', ')}.` : '';
+    return `Imported: ${what}, ${plural(settings.packs.on.length, 'pack')} on.${left} Lookups stay as they were.`;
   }
 
-  const popup = { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile, settingsFile, importNote };
+  const popup = { seenCountries, visibleCountries, countRows, detectionRows, packRows, packCountRows, statusLines, dbFile, settingsFile, importNote };
   if (typeof module === 'object') {
     module.exports = popup;
     return;
@@ -98,13 +124,14 @@
 
   // --- DOM wiring ---
 
-  const { settings: Settings, countries: Countries, db: Db } = globalThis.Papieren;
+  const { settings: Settings, countries: Countries, db: Db, packs: Packs } = globalThis.Papieren;
   const STORES = ['memory', 'history', 'stats'];
   const KIND_NAMES = { cache: 'country cache', memory: 'behaviour memory', history: 'hidden history', stats: 'statistics' };
   const $ = (id) => document.getElementById(id);
   const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   let current;
   let picker = [];
+  let packList = [];
   let budget = {};
   let stats = null;
   let dbError = null;
@@ -140,12 +167,31 @@
     $('countries').replaceChildren(...items);
   }
 
-  // Country names come from X: textContent only, never innerHTML. The
-  // detection rows follow the countries (database Req 6.2).
+  // Pack names and descriptions come from files: textContent only. Rebuilt
+  // on open and import, as the country list is.
+  function renderPacks() {
+    const rows = packRows(packList, current.packs.on).map((r) => {
+      const box = Object.assign(document.createElement('input'), { type: 'checkbox', value: r.id, checked: r.on });
+      box.setAttribute('aria-describedby', `pack-line-${r.id}`);
+      const label = el('label', '');
+      label.append(box, ` ${r.name}`);
+      const row = document.createElement('div');
+      row.append(label, Object.assign(el('p', r.line), { id: `pack-line-${r.id}`, className: 'muted pack-line' }));
+      return row;
+    });
+    $('packs').replaceChildren(...rows);
+    $('packs').hidden = rows.length === 0;
+    $('packs-note').textContent = rows.length ? '' : 'No packs here yet: the built-in packs arrive when Papieren is installed or updated.';
+  }
+
+  // Country names come from X: textContent only, never innerHTML. The Pack
+  // rows follow the countries (packs Req 7.4), then the detections
+  // (database Req 6.2).
   function renderCounts() {
     const rows = !stats ? [] : [
       ...countRows(stats.byCountry).map((r) => [r.country, r.n,
         [r.confirmed && `${r.confirmed} confirmed`, r.flagged && `${r.flagged} flagged`].filter(Boolean).join(', ')]),
+      ...packCountRows(stats.byRule, packList).map((r) => [r.name, r.n, '']),
       ...detectionRows(stats.byRule).map((r) => [r.name, r.n, '']),
     ];
     $('counts').tBodies[0].replaceChildren(...rows.map((cells) => {
@@ -160,6 +206,8 @@
   function render() {
     for (const r of document.querySelectorAll('input[name="mode"]')) r.checked = r.value === current.mode;
     for (const r of document.querySelectorAll('input[name="placeholder"]')) r.checked = r.value === current.placeholder;
+    for (const r of document.querySelectorAll('input[name="pack-mode"]')) r.checked = r.value === current.packs.mode;
+    for (const box of $('packs').querySelectorAll('input')) box.checked = current.packs.on.includes(box.value);
     $('paused').checked = current.paused;
     $('lookups').checked = current.lookups;
     $('budget').value = String(current.budget);
@@ -176,15 +224,16 @@
     if (!file) return;
     const out = file.size > MAX_IMPORT_BYTES
       ? { ok: false, reason: 'The file is too large to be Papieren settings.' }
-      : Settings.parseImport(await file.text(), current);
+      : Settings.parseImport(await file.text(), current, packList.map((p) => p.id));
     if (!out.ok) {
       fileNote(`Not imported: ${out.reason}`);
       return;
     }
     current = out.settings;
     await chrome.storage.local.set({ settings: current });
-    fileNote(importNote(current));
+    fileNote(importNote(current, out.dropped));
     renderList();
+    renderPacks();
     render();
   }
 
@@ -257,6 +306,18 @@
       save({ countries: [...set] });
     });
 
+    for (const r of document.querySelectorAll('input[name="pack-mode"]')) {
+      r.addEventListener('change', () => save({ packs: { ...current.packs, mode: r.value } }));
+    }
+    $('packs').addEventListener('change', (e) => {
+      const set = new Set(current.packs.on);
+      if (e.target.checked) set.add(e.target.value);
+      else set.delete(e.target.value);
+      save({ packs: { ...current.packs, on: [...set] } });
+    });
+    // A tab of the extension's own: no permission needed (packs design, Popup).
+    $('edit-packs').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('popup/packs.html') }));
+
     // Switching on only opens the warning; lookups start on the explicit
     // accept (Req 3.7). Switching off is immediate.
     $('lookups').addEventListener('change', (e) => {
@@ -319,12 +380,15 @@
     ]);
     current = Settings.normalize(all.settings);
     picker = Countries.pickerList(seenCountries(all));
+    // The same list the content scripts filter with (signals/packs.js).
+    packList = Packs.merge(all['packs:builtin'], all['packs:user']);
     budget = session.budget ?? {};
     dbError = session.dbError ?? null;
     // No content script on this tab (not x.com) rejects: no counts, no layout.
     stats = tab?.id === undefined ? null : await chrome.tabs.sendMessage(tab.id, { type: 'stats' }).catch(() => null);
     wire();
     renderList();
+    renderPacks();
     render();
     // Popup open is one of the sweep's moments (design, Sweep).
     send({ type: 'db-sweep' }).then((r) => {

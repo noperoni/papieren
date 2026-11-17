@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile, settingsFile, importNote } = require('../popup/popup.js');
+const { seenCountries, visibleCountries, countRows, detectionRows, packRows, packCountRows, statusLines, dbFile, settingsFile, importNote } = require('../popup/popup.js');
 const { normalize, parseImport } = require('../src/lib/settings.js');
 
 test('seenCountries: cache entries only, named countries only, once each', () => {
@@ -112,12 +112,43 @@ test('settingsFile: dated JSON that imports back unchanged (Req 6.4)', () => {
   assert.equal(file.name, 'papieren-settings-2026-11-15.json', 'the local day, as the database exports');
   assert.equal(file.type, 'application/json');
   assert.ok(file.text.endsWith('}\n'));
-  assert.deepEqual(parseImport(file.text, normalize({})), { ok: true, settings });
+  assert.deepEqual(parseImport(file.text, normalize({})), { ok: true, settings, dropped: [] });
 });
 
-test('importNote: mode and country count, and what a file never changes (Req 3.7)', () => {
+test('importNote: mode, counts, Packs left off, and what a file never changes (Req 3.7)', () => {
   const tail = ' Lookups stay as they were.';
-  assert.equal(importNote(normalize({ countries: ['India', 'Peru'] })), `Imported: hide 2 countries.${tail}`);
-  assert.equal(importNote(normalize({ mode: 'allow', countries: ['Peru'] })), `Imported: show only 1 country.${tail}`);
-  assert.equal(importNote(normalize({})), `Imported: hide 0 countries.${tail}`);
+  assert.equal(importNote(normalize({ countries: ['India', 'Peru'] })), `Imported: hide 2 countries, 0 packs on.${tail}`);
+  assert.equal(importNote(normalize({ mode: 'allow', countries: ['Peru'], packs: { on: ['ragebait'] } })), `Imported: show only 1 country, 1 pack on.${tail}`);
+  assert.equal(importNote(normalize({ packs: { on: ['a', 'b'] } }), ['mine', 'gone']),
+    `Imported: hide 0 countries, 2 packs on. Not here, so left off: mine, gone.${tail}`);
+});
+
+const pack = (over = {}) => ({
+  papierenPack: 1, id: 'bait', name: 'Bait', kind: 'junk', description: 'Asks for likes.',
+  version: 1, threshold: 6, tells: [], languages: { en: [{ w: 3, on: 'text', phrase: 'like if you agree' }] }, ...over,
+});
+
+test('packRows: list order, Kind, description, Threshold, Tell count, and the copy line (Req 4.3)', () => {
+  const list = [
+    pack({ id: 'engagement-bait', name: 'Engagement bait', version: 4 }),
+    pack({ id: 'sports', name: 'Sports', kind: 'topic', description: 'Scores.', threshold: 1, languages: {}, tells: [] }),
+    pack({ id: 'mine', name: 'Engagement bait (copy)', from: { id: 'engagement-bait', version: 3 } }),
+    pack({ id: 'orphan', name: 'Orphan', from: { id: 'retired', version: 1 } }),
+  ];
+  const rows = packRows(list, ['mine', 'gone']);
+  assert.deepEqual(rows.map((r) => [r.id, r.on]), [['engagement-bait', false], ['sports', false], ['mine', true], ['orphan', false]]);
+  assert.equal(rows[0].line, 'Junk · Asks for likes. · threshold 6 · 1 tell');
+  assert.equal(rows[1].line, 'Topic · Scores. · threshold 1 · 0 tells');
+  assert.equal(rows[2].line, 'Junk · Asks for likes. · threshold 6 · 1 tell · copy of Engagement bait v3');
+  assert.match(rows[3].line, /copy of retired v1$/);
+  assert.deepEqual(packRows([], []), []);
+});
+
+test('packCountRows: each Pack under its name in list order, a gone Pack by id, Outside last, zeros left out (Req 7.4)', () => {
+  const list = [pack({ id: 'ragebait', name: 'Ragebait' }), pack({ id: 'bait', name: 'Engagement bait' }), pack({ id: 'quiet', name: 'Quiet' })];
+  const byRule = { 'pack:bait': 2, 'pack:ragebait': 1, 'pack:deleted': 4, 'packs:outside': 3, 'bm:copy': 5 };
+  assert.deepEqual(packCountRows(byRule, list),
+    [{ name: 'Ragebait', n: 1 }, { name: 'Engagement bait', n: 2 }, { name: 'deleted', n: 4 }, { name: 'Outside your packs', n: 3 }]);
+  assert.deepEqual(packCountRows(undefined, list), []);
+  assert.deepEqual(detectionRows(byRule), [{ name: 'Copy-paste reply', n: 5 }], 'the detection rows ignore Pack rules');
 });

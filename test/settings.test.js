@@ -154,16 +154,21 @@ test('packs normalize: bad mode falls back; duplicates, bad ids and ids beyond 1
   assert.deepEqual(normalize({ packs: { on: many } }).packs.on, many.slice(0, 100));
 });
 
-test('packs import: a good block is taken, ids that do not exist here dropped', () => {
-  const r = parseImport(file({ packs: { mode: 'allbut', on: ['ragebait', 'mine', 'gone'] } }), DEFAULTS, ['ragebait', 'mine', 'other']);
+test('packs import: a good block is taken, ids that do not exist here dropped and named once', () => {
+  const r = parseImport(file({ packs: { mode: 'allbut', on: ['ragebait', 'mine', 'gone', 'gone'] } }), DEFAULTS, ['ragebait', 'mine', 'other']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.settings.packs, { mode: 'allbut', on: ['ragebait', 'mine'] });
-  assert.deepEqual(parseImport(file({ packs: { on: ['ragebait'] } }), DEFAULTS).settings.packs, { mode: 'block', on: [] });
+  assert.deepEqual(r.dropped, ['gone']);
+  const none = parseImport(file({ packs: { on: ['ragebait'] } }), DEFAULTS);
+  assert.deepEqual(none.settings.packs, { mode: 'block', on: [] });
+  assert.deepEqual(none.dropped, ['ragebait']);
 });
 
-test('packs import: a file without packs keeps the current block', () => {
+test('packs import: a file without packs keeps the current block and drops nothing', () => {
   const cur = normalize({ packs: { mode: 'allbut', on: ['ragebait'] } });
-  assert.deepEqual(parseImport(file(), cur, []).settings.packs, cur.packs);
+  const r = parseImport(file(), cur, []);
+  assert.deepEqual(r.settings.packs, cur.packs);
+  assert.deepEqual(r.dropped, []);
 });
 
 test('packs import: a bad block is rejected whole', () => {
