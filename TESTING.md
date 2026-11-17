@@ -1,6 +1,6 @@
 # Papieren manual checks
 
-One check per acceptance criterion of `specs/papieren-country-filter/requirements.md`, then the D rows for `specs/papieren-database/requirements.md`, run by hand in Brave with Papieren loaded unpacked. The unit tests (`npm test`) cover the logic; these checks cover what only a real x.com tab can show.
+One check per acceptance criterion of `specs/papieren-country-filter/requirements.md`, then the D rows for `specs/papieren-database/requirements.md` and the P rows for `specs/papieren-packs/requirements.md`, run by hand in Brave with Papieren loaded unpacked. The unit tests (`npm test`) cover the logic; these checks cover what only a real x.com tab can show.
 
 ## Where a check runs
 
@@ -181,6 +181,53 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 | D7.3 | L | `watch()`, scroll `/home` for a minute; switch to another tab for 30 s; come back. | Flushes from one tab are at least 5 s apart; at most one flush as the tab is hidden, none while it stays hidden. |
 | D7.4 | L | 9.1 with all four detections on, as two headless pairs in `e2e/footprint.js`. `npm run footprint` (about 4 minutes): a fake x.com feeds A and B the same 8,000 posts, past every 5,000-key cap of the tab's maps, 60 cells left in the DOM as X recycles them; nothing reaches X. `npm run footprint:live` (about an hour, burner only, lookups off): 30 minutes of For you per run. X serves each run different posts, and run A alone has measured 305 to 548 MB, so the live pair judges the page's JS heap after a full GC, where the content script and page hook live. | Fake: B minus A footprint at most 50 MB, and in B every rule hid at least one post (else the run is invalid, exit 2). Live: B minus A JS heap after GC at most 50 MB, neither run stalled. |
 
+## Packs (`specs/papieren-packs`)
+
+Packs judge what X already sends, so no P row needs lookups. The editor is the popup's "Edit packs…" tab.
+
+**Automated (2026-11-17).** In `papieren/e2e/`, `pack-feed.test.js` runs the feed rows against `fakex.js`, whose posts carry text and a language; `editor.test.js` runs the editor rows and `popup.test.js` the popup's Packs section. A green `npm test` stands in for the L rows marked Auto. Rows marked Unit name the `papieren/test/` check that covers them.
+
+| # | Run | Do | Pass when |
+|---|---|---|---|
+| P1.1 | L, Auto | Popup: hide mode, Engagement bait ticked. Search X for "follow for more". | A post scoring 6 or more reads `Hidden: @handle · Engagement bait (click to show)`; a post with one stray phrase shows. |
+| P1.2 | Unit | `packs.test.js` "a Phrase met twice counts once; whitespace runs match; overlapping Phrases all count". | Passes. |
+| P1.3 | Unit | `signal-packs.test.js` "fromTweet: reply and quote flags; a repost carries the original…" and "a repost names the reposted Post…". | Pass. |
+| P1.4 | Unit | `packs.test.js` "a repost judges name and bio on either Author (Req 1.4)" and "accountScore: badges or behaviour of either Author, each Tell once, hidden-before per Pack". | Pass. |
+| P1.5 | Unit | `packs.test.js` "a quote is judged on its own text only (Req 1.5)"; `signal-packs.test.js` "fromTweet: links give hosts…; a quote…". | Pass. |
+| P1.6 | Unit | `packs.test.js` "a Tell whose input is missing is not met (Req 1.6)". | Passes. |
+| P2.1 | L, Auto | P1.1's post hidden. Untick Engagement bait in the popup, then tick it again, without F5. | The post shows, then hides again, with no reload. |
+| P2.2 | L, Auto | Popup: "Show only posts my packs match", Engagement bait ticked. | A plain post reads `Hidden: @handle · outside your packs (click to show)`; a bait post shows. |
+| P2.3 | L, Auto | P2.2 with every Pack unticked. | Nothing is hidden on Packs. |
+| P2.4 | Unit | `rules.test.js` "packs: viewer, focal post, pause and an unfiltered page are never hidden on a Pack (Req 2.4, 2.5)"; `signal-packs.test.js` "prepare leaves the viewer out of the Score, as evaluate does". | Pass. |
+| P2.5 | L | P1.1's post hidden; tick Pause, then untick it. | Every post shows while paused; the post hides again after. Unit: as P2.4. |
+| P2.6 | Unit | `signal-packs.test.js` "All_But: a post no Pack matches hides as outside your packs; no Pack facts, never hidden (Req 2.2, 2.6)". | Passes. |
+| P3.1 | L, Auto | P1.1 with a French post carrying the same English phrases. | It shows: Engagement bait has English entries only. |
+| P3.2 | Unit | `packs.test.js` "text Tells only for the Post_Language; the rest whatever the language (Req 3.1 to 3.3)". | Passes. |
+| P3.3 | L, Auto | As P3.1. | As P3.1. |
+| P3.4 | Unit | `builtin.test.js` "example.json uses every kind of Tell, every measure, a negative weight and two languages"; `editor.test.js` "formOf and fromForm…" saves a second language. | Pass. |
+| P4.1 | L, Auto | Open the popup. | Packs lists Engagement bait, Ragebait, AI-tone writing and Aggregator style, each with English entries in the editor. |
+| P4.2 | L, Auto | A fresh install, then the popup. | Every Pack is unticked. |
+| P4.3 | L, Auto | The popup's Pack rows, after P5.1. | Each row shows Kind, description, threshold and tell count; the copy adds "copy of Engagement bait v1". |
+| P4.4 | Unit | `background.test.js` "update: built-ins replaced, user Packs untouched, packs.on keeps only ids that still exist (Req 4.4)". | Passes. |
+| P4.5 | Unit | `builtin.test.js` "example.json uses every kind of Tell…": a topic Pack through the validator and scorer the junk built-ins use. | Passes. |
+| P5.1 | L, Auto | Engagement bait ticked. Editor: select it, Edit a copy. | "Engagement bait (copy)" appears, reads "A copy of Engagement bait v1.", and is ticked in the popup where the built-in was. |
+| P5.2 | L, Auto | In the copy: change the threshold, add a line, delete a line, Save. | "Saved, version 2."; the popup row shows the new threshold and tell count. |
+| P5.3 | L, Auto | Editor: New pack. | "My pack" opens with commented example lines in Any language and English. |
+| P5.4 | L, Auto | In the copy, add `2 /(a+)+$/` to English and Save; then a 201-character pattern; then `1 /(unclosed/`. | Each reads "Not saved: Language en, line N: …" with the reason, and the stored pack is unchanged. Unit: `editor.test.js` "fromForm: a refusal names the box, the line and the reason, and saves nothing (Req 5.4)". |
+| P5.5 | L, Auto | Hold 100 packs, then New pack. | "Not made: Papieren holds at most 100 packs: delete one first." Unit: `packs.test.js` "validate: at most 300 Tells over tells and every language (Req 5.5)". |
+| P6.1 | L, Auto | Editor: select Ragebait, Export. | `papieren-pack-ragebait.json` is saved in the Pack_Template format. |
+| P6.2 | L, Auto | Import that file with one pattern changed to `(a+)+`. | "Not imported: languages.en…" names the reason, and nothing is added. |
+| P6.3 | L, Auto | Import P6.1's file unchanged. | "Imported Ragebait as "ragebait-2", switched off.", and it is unticked in the popup. |
+| P6.4 | Unit | `builtin.test.js` "pack.schema.json: its enums are the validator's…" and "example.json uses every kind of Tell…". | Pass. |
+| P6.5 | L, Auto | The worker's, the popup's and the editor's Network tabs through P4 to P6. | No request leaves the extension; the built-ins come from its own package (Unit: `background.test.js` "install: every built-in read from the package…"). |
+| P7.1 | L, Auto | As P1.1. | As P1.1. |
+| P7.2 | Unit | `signal-packs.test.js` "Blocklist: the Pack exceeding its Threshold by the most; a tie goes to the earlier in the list (Req 2.1, 7.2)". | Passes. |
+| P7.3 | L, Auto | As P2.2. | As P2.2. |
+| P7.4 | L, Auto | The popup on P1.1's tab, then on P2.2's. | "Hidden on this page" has a row "Engagement bait 1", then "Outside your packs" with the count. |
+| P8.1 | L, Auto; B | The x.com tab's Network panel with Packs on, lookups off; on the burner with lookups on (task 11). | No request from Papieren but lookups. |
+| P8.2 | Unit | `builtin.test.js` "every Pack file passes validate under its own file name…"; adding a built-in is one line in `background.js` `BUILTIN` and its file. | Passes. |
+| P8.3 | Unit; B | `bench-packs.test.js` "Req 8.3: the batch reads the memo inside 8 ms for 100 Posts…"; one DevTools performance look on the burner at intake (task 11). | Passes; no long task at intake on the burner. |
+
 ## Beyond the criteria
 
 | Check | Run | Do | Pass when |
@@ -194,6 +241,7 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 - The GraphQL "query not found" form of OpNotFound is not handled (`ponytail:` in the code).
 - Rule_Statistics count once per tweet per day per tab, so each F5 of a page counts its posts again; the Hidden_History rows do not double.
 - The QuotaExceeded sweep-and-retry of `db-flush` is tested with an injected error (`e2e/popup.test.js`): Chromium's DevTools quota override does not bind IndexedDB, and the real quota is a share of the disk, so a real one has never been provoked.
+- Fake X posts carry text and a language only: name, bio, checkmarks, media, links and quotes reach Packs in the unit tests, on captured payload shapes, and on real X only in task 11's live run.
 - D7.4's fake cells are a fraction of X's markup, and the live pair judges only the JS heap, where DOM nodes do not live: what Papieren's placeholders and data attributes cost on real X cells is measured by neither verdict. Both are bounded by the cells X keeps in the DOM.
 
 ## Run log
@@ -204,3 +252,4 @@ const watch = () => chrome.runtime.onMessage.addListener((m, s) => {
 | 2026-11-15 | legacy | main | D1.2; before the D rows were written, the popup with the switch on: a detection ticked, Export JSON and one CSV, a Retention change, "Delete all" on two clicks, then D1.4's switch-off with the database gone | none |
 | 2026-11-15 | legacy | burner | `papieren/e2e`: `npm test` (23 pass, D7.3's hidden half skipped headless) and that half headed; `npm run live`, 6 of 6, follow flag seen 299 times in `relationship_perspectives`, never in `legacy` | none in Papieren; the live script's first contact needed fixes (Following holds only followed accounts, x.com's own service worker, focus emulation, popup tab in front) |
 | 2026-11-15 | fake, legacy | none, burner | D7.4: `npm run footprint` twice, B minus A 7.5 and 8.7 MB (after GC 3.7 and 4.9, JS heap 2.3 both times), every rule hiding in B; a 3-minute live trial on the burner, JS heap after GC A 76.4, B 76.5 MB. The 30-minute `npm run footprint:live` not yet run | none |
+| 2026-11-17 | fake | none | `papieren/e2e`: `npm test`, 36 pass and D7.3's hidden half skipped, twice; the P rows marked Auto among them. The L, B and Unit-only P rows by hand: not yet run | none |

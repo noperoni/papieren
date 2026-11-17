@@ -19,7 +19,7 @@ export const post = (id, handle, more = {}) => ({ id: String(id), handle, uid: m
 function tweetJson(p) {
   const user = { rest_id: p.uid, core: { screen_name: p.handle }, legacy: { screen_name: p.handle } };
   if (p.following) user.relationship_perspectives = { following: true };
-  const legacy = { full_text: p.text ?? `post ${p.id}` };
+  const legacy = { full_text: p.text ?? `post ${p.id}`, lang: p.lang ?? 'en' };
   if (p.conv) Object.assign(legacy, { conversation_id_str: p.conv, in_reply_to_status_id_str: p.conv });
   if (p.media) legacy.extended_entities = { media: p.media.map((m) => ({ id_str: String(m) })) };
   return { __typename: 'Tweet', rest_id: p.id, core: { user_results: { result: user } }, legacy };
