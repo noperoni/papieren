@@ -12,9 +12,10 @@
   const MAX_PACKS = 100;
   const PACK_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;   // as lib/packs.js, which loads after this file
 
-  // Database block (database Req 1.1, 2.2, 3.5): everything off, Retention in days.
+  // Database block (database Req 2.2, 3.5): every detection off, Retention in days.
+  // No master switch: the database is always there (2026-11-17).
   const DB_DEFAULTS = Object.freeze({
-    on: false, copy: false, everywhere: false, media: false, offender: false,
+    copy: false, everywhere: false, media: false, offender: false,
     keep: Object.freeze({ cache: 30, memory: 3, history: 7, stats: 90 }),
   });
 
@@ -30,17 +31,20 @@
   const clampBudget = (n) => clamp(n, 1, MAX_BUDGET, DEFAULTS.budget);
   const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
+  // A stored or imported `on` (the master switch before the database became required) is not
+  // copied, so an install that had the database off starts recording.
   function normalizeDb(raw) {
     const r = isObject(raw) ? raw : {};
     const k = isObject(r.keep) ? r.keep : {};
     const keep = {};
     for (const [kind, days] of Object.entries(DB_DEFAULTS.keep)) keep[kind] = clamp(k[kind], 1, MAX_KEEP, days);
-    const db = { on: r.on === true };
+    const db = {};
     for (const d of DETECTIONS) db[d] = r[d] === true;
     return { ...db, keep };
   }
 
-  // Strict check of an imported db block; null when it is acceptable.
+  // Strict check of an imported db block; null when it is acceptable. An old
+  // file's boolean `on` passes and normalizeDb drops it.
   function dbProblem(raw) {
     if (!isObject(raw)) return 'db must be an object.';
     for (const d of ['on', ...DETECTIONS]) if (d in raw && typeof raw[d] !== 'boolean') return `db.${d} must be true or false.`;
@@ -95,9 +99,8 @@
   // Strict: a file that fails any check is rejected whole, with the reason
   // for the popup. Out-of-range budgets are clamped and duplicates dropped,
   // since neither changes what the file meant. An import never switches
-  // lookups on: that takes the popup's risk confirmation (Req 3.7). Nor does
-  // it touch db.on: switching the database off would delete records without
-  // the export offer (database Req 1.4). A file without db keeps the current block.
+  // lookups on: that takes the popup's risk confirmation (Req 3.7). A file
+  // without db keeps the current block.
   // A packs block keeps only the ids in packIds, the Packs that exist here;
   // a file without one keeps the current block.
   function parseImport(text, current, packIds = []) {
@@ -121,7 +124,7 @@
     const problem = ('db' in raw ? dbProblem(raw.db) : null) ?? ('packs' in raw ? packsProblem(raw.packs) : null);
     if (problem) return reject(problem);
     const cur = normalize(current);
-    const db = 'db' in raw ? { ...raw.db, on: cur.db.on } : cur.db;
+    const db = 'db' in raw ? raw.db : cur.db;
     const known = new Set(packIds);
     const packs = 'packs' in raw ? { ...raw.packs, on: (raw.packs.on ?? []).filter((id) => known.has(id)) } : cur.packs;
     return { ok: true, settings: normalize({ ...raw, lookups: cur.lookups, db, packs }) };

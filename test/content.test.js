@@ -220,8 +220,9 @@ test('lookups: no permit, no request; the queue sleeps until the worker\'s retry
   t.inView(cell);
   await settle();
   assert.equal(t.toPage.filter((m) => m.kind === 'lookup').length, 0);
-  assert.equal(t.timers.length, 1);
-  assert.ok(t.timers[0] > 55_000 && t.timers[0] <= 60_000);
+  const wake = t.timers.filter((ms) => ms > 5_000); // the database's flush timer is 5 s at most
+  assert.equal(wake.length, 1);
+  assert.ok(wake[0] > 55_000 && wake[0] <= 60_000);
 });
 
 test('lookups: nothing is asked while switched off, nor before the hook is ready (Req 3.6)', async () => {
@@ -316,22 +317,11 @@ const hide = async (t) => {
 };
 const copyThread = (t, cells) => t.fromPage(payload(...cells.map((c, i) => reply(c.post.tweetId, user(`10${i}`, `a${i}`), SAME))));
 
-test('database off: a copy-paste thread stays visible and no db-* message is sent (Req 1.2)', async () => {
-  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: false, copy: true } } }, cells });
-  await settle();
-  copyThread(t, cells);
-  await settle();
-  await hide(t);
-  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
-  assert.deepEqual(t.sent.filter((m) => m.type.startsWith('db-')), []);
-});
-
 test('copy-paste: three Authors with one text hide with the count; the flush carries fingerprints, never text (Req 3.1, 3.6, 4, 6.1)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
   const ivan = fakeCell('14', 'Ivan_Example');
   const t = load({
-    local: { settings: { countries: ['Russia'], db: { on: true, copy: true, offender: true } }, 'c:ivan_example': RUSSIA },
+    local: { settings: { countries: ['Russia'], db: { copy: true, offender: true } }, 'c:ivan_example': RUSSIA },
     cells: [...cells, ivan],
   });
   await settle();
@@ -366,7 +356,7 @@ test('worker flags hide at boot; neither a followed Author nor the viewer is hit
   const bad = fakeCell('21', 'bad');
   const friend = fakeCell('22', 'friend');
   const mine = fakeCell('23', 'me_myself');
-  const t = load({ local: { settings: { db: { on: true, offender: true } } }, cells: [bad, friend, mine] });
+  const t = load({ local: { settings: { db: { offender: true } } }, cells: [bad, friend, mine] });
   t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5, 201: 5, 42: 5 } } };
   await settle();
   t.fromPage(payload(tweet('21', user('200', 'bad')), tweet('22', user('201', 'friend', { legacy: { following: true } })), tweet('23', user('42', 'me_myself'))));
@@ -378,7 +368,7 @@ test('worker flags hide at boot; neither a followed Author nor the viewer is hit
 
 test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', async () => {
   const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
-  const t = load({ local: { settings: { db: { on: true, media: true } } }, cells });
+  const t = load({ local: { settings: { db: { media: true } } }, cells });
   await settle();
   t.fromPage(payload(...cells.map((c, i) => tweet(c.post.tweetId, user(`30${i}`, `m${i}`), { extended_entities: { media: [{ id_str: 'p9' }] } }))));
   await settle();
@@ -389,7 +379,7 @@ test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', a
 test('dbEpoch: the worker deleted rows, so the tab drops its sightings and flags and asks again', async () => {
   const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
   const bad = fakeCell('21', 'bad');
-  const t = load({ local: { settings: { db: { on: true, media: true, offender: true } } }, cells: [...cells, bad] });
+  const t = load({ local: { settings: { db: { media: true, offender: true } } }, cells: [...cells, bad] });
   t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5 } } };
   await settle();
   t.fromPage(payload(tweet('21', user('200', 'bad')),
@@ -404,9 +394,9 @@ test('dbEpoch: the worker deleted rows, so the tab drops its sightings and flags
   assert.ok([...cells, bad].every((c) => c.dataset.papieren !== 'hidden'));
 });
 
-test('an { error } answer runs the tab as switched off; a settings change asks again (Req 7.2)', async () => {
+test('an { error } answer runs the tab without the database; a settings change asks again (Req 7.2)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  const t = load({ local: { settings: { db: { copy: true } } }, cells });
   t.replies['db-flush'] = { error: 'UnknownError' };
   await settle();
   copyThread(t, cells);
@@ -418,15 +408,15 @@ test('an { error } answer runs the tab as switched off; a settings change asks a
   await settle();
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 
-  await t.area.set({ settings: { db: { on: true, copy: true, everywhere: true } } });
+  await t.area.set({ settings: { db: { copy: true, everywhere: true } } });
   await settle();
   assert.equal(t.sent.filter((m) => m.type === 'db-flags').length, 2);
   assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
 });
 
-test('flush: at most one per 5 s, none while hidden; switching off drops what waits (Req 7.3, 1.2)', async () => {
+test('flush: at most one per 5 s, none while hidden (Req 7.3)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  const t = load({ local: { settings: { db: { copy: true } } }, cells });
   await settle();
   copyThread(t, cells);
   await settle();
@@ -438,13 +428,11 @@ test('flush: at most one per 5 s, none while hidden; switching off drops what wa
   assert.ok(t.timers.at(-1) > 4000 && t.timers.at(-1) <= 5000);
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 
-  await t.area.set({ settings: { db: { on: false, copy: true } } });
-  await settle();
-  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
-  await hide(t);
-  t.runTimers();
-  await settle();
-  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
+  await hide(t); // one last flush, then no timer until the tab is visible again
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 2);
+  const timers = t.timers.length;
+  t.click(cells[1]);
+  assert.equal(t.timers.length, timers);
 });
 
 // --- Packs (packs design, task 5.2) ---

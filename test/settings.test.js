@@ -75,18 +75,17 @@ test('import: a bad file is rejected whole with a reason (Req 6.4)', () => {
   }
 });
 
-// --- Database block (database Req 1.1, 2.1, 2.2, 3.5, 1.4) ---
+// --- Database block (database Req 2.1, 2.2, 3.5) ---
 
-test('db defaults: switch and detections off, Retention 30 / 3 / 7 / 90 days', () => {
+test('db defaults: detections off, Retention 30 / 3 / 7 / 90 days', () => {
   assert.deepEqual(normalize(undefined).db, {
-    on: false, copy: false, everywhere: false, media: false, offender: false,
+    copy: false, everywhere: false, media: false, offender: false,
     keep: { cache: 30, memory: 3, history: 7, stats: 90 },
   });
 });
 
 test('db normalize: only exact true switches anything on; Retention clamped to 1..365', () => {
-  const db = normalize({ db: { on: 'yes', copy: true, media: 1, keep: { cache: 400, memory: 0, history: 7.8, stats: 'x' } } }).db;
-  assert.equal(db.on, false);
+  const db = normalize({ db: { copy: true, media: 1, keep: { cache: 400, memory: 0, history: 7.8, stats: 'x' } } }).db;
   assert.equal(db.copy, true);
   assert.equal(db.media, false);
   assert.deepEqual(db.keep, { cache: 365, memory: 1, history: 7, stats: 90 });
@@ -94,18 +93,29 @@ test('db normalize: only exact true switches anything on; Retention clamped to 1
   assert.deepEqual(normalize({ db: { keep: null } }).db.keep, normalize(undefined).db.keep);
 });
 
-test('db import: a good block is taken, but db.on keeps its current value', () => {
-  const on = { ...DEFAULTS, db: { ...DEFAULTS.db, on: true } };
-  const r = parseImport(file({ db: { on: false, everywhere: true, keep: { history: 14 } } }), on);
+test('db import: a good block is taken', () => {
+  const r = parseImport(file({ db: { everywhere: true, keep: { history: 14 } } }), DEFAULTS);
   assert.equal(r.ok, true);
-  assert.equal(r.settings.db.on, true);
   assert.equal(r.settings.db.everywhere, true);
   assert.deepEqual(r.settings.db.keep, { cache: 30, memory: 3, history: 14, stats: 90 });
-  assert.equal(parseImport(file({ db: { on: true } }), DEFAULTS).settings.db.on, false);
+});
+
+// The database switch went on 2026-11-17: the key is read and ignored.
+test('db: the old switch, stored as false or carried by an old export, is dropped', () => {
+  const stored = normalize({ db: { on: false, copy: true, keep: { memory: 5 } } }).db;
+  assert.equal('on' in stored, false);
+  assert.equal(stored.copy, true);
+  assert.equal(stored.keep.memory, 5);
+  for (const on of [true, false]) {
+    const r = parseImport(file({ db: { on, media: true } }), DEFAULTS);
+    assert.equal(r.ok, true);
+    assert.equal('on' in r.settings.db, false);
+    assert.equal(r.settings.db.media, true);
+  }
 });
 
 test('db import: a file without db keeps the current block whole', () => {
-  const cur = normalize({ db: { on: true, copy: true, keep: { memory: 5 } } });
+  const cur = normalize({ db: { copy: true, keep: { memory: 5 } } });
   assert.deepEqual(parseImport(file(), cur).settings.db, cur.db);
 });
 

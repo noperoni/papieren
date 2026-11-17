@@ -31,7 +31,6 @@ function installHelpers() {
     },
     put: (store, ...list) => db.tx([store], 'readwrite', (tx) => Promise.all(list.map((r) => db.put(tx, store, r)))),
     ago: (days) => Date.now() - days * 864e5,
-    dbExists: async () => (await indexedDB.databases()).some((d) => d.name === 'papieren'),
     // Merges into the saved settings, db one level deep, as the popup's save does.
     set: async (patch) => {
       const s = settings.normalize((await chrome.storage.local.get('settings')).settings);

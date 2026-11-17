@@ -55,30 +55,11 @@ const THREAD = [post(100, 'root'), ...['a0', 'a1', 'a2'].map((h, i) => post(101 
 // Posts carrying images: @mike's image 777 is the one the checks recycle.
 const MEDIA = [post(10, 'mike', { media: ['777'] }), post(11, 'nova', { media: ['778'] }), post(12, 'alpha')];
 
-test('D1.2 switch off: filtering as before, no detection rows, no database', async (tc) => {
-  const { b, x } = await setup(tc);
-  x.set('/home', HOME);
-  x.set('/root/status/100', THREAD);
-  const home = await x.open('/home');
-  await hidden(home, '1', /^Hidden: @alpha · France \(click to show\)$/);
-  await hidden(home, '3');
-  await shown(home, '2');
-  await shown(home, '4');
-  const p = await b.popup({ tabOf: home });
-  await until(async () => (await p.locator('#counts').textContent()).includes('France'), 'France in the counts');
-  assert.match(await p.locator('#counts').textContent(), /France\s*2/);
-  assert.doesNotMatch(await p.locator('#counts').textContent(), /copy-paste|everywhere|recycled|repeat/i);
-  const thread = await x.open('/root/status/100', home);
-  await hidden(thread, '104');
-  await new Promise((r) => setTimeout(r, FLUSH + 1000));
-  assert.equal(await b.sw(() => t.dbExists()), false);
-});
-
 const settleFlush = () => new Promise((r) => setTimeout(r, FLUSH + 1500));
 const memoryRows = (b) => b.sw(() => t.rows('memory'));
 
 test('D3.1 copy-paste replies hide once a third account posts the same reply', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true, copy: true } });
+  const { b, x } = await setup(tc, { db: { copy: true } });
   x.set('/root/status/100', THREAD.filter((p) => p.id !== '103'));
   const page = await x.open('/root/status/100');
   await settleFlush();
@@ -96,7 +77,7 @@ test('D3.1 copy-paste replies hide once a third account posts the same reply', a
 });
 
 test('D3.3 to D7.2: recycled media, toggling, popup counts, database failure', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true, media: true } });
+  const { b, x } = await setup(tc, { db: { media: true } });
   x.set('/home', MEDIA);
   const home = await x.open('/home');
 
@@ -131,7 +112,7 @@ test('D3.3 to D7.2: recycled media, toggling, popup counts, database failure', a
     await p.close();
   });
 
-  await tc.test('D7.2 a database failure runs as switched off until settings change', async () => {
+  await tc.test('D7.2 a database failure runs without the database until settings change', async () => {
     await b.sw(() => chrome.storage.session.set({ dbError: 'test' }));
     await home.reload();
     await home.waitForFunction(() => document.title === 'fake X ready');
@@ -139,7 +120,7 @@ test('D3.3 to D7.2: recycled media, toggling, popup counts, database failure', a
     await shown(home, '10');
     const p = await b.popup({ tabOf: home });
     const status = p.locator('#status');
-    assert.match(await status.textContent(), /Database unavailable \(test\): running as if switched off\./);
+    assert.match(await status.textContent(), /Database unavailable \(test\): running without it\./);
     await p.locator('#paused').check();
     await p.locator('#paused').uncheck();
     await until(async () => !(await status.textContent()).includes('Database unavailable'), 'line gone');
@@ -148,7 +129,7 @@ test('D3.3 to D7.2: recycled media, toggling, popup counts, database failure', a
 });
 
 test('deleted rows stop hiding in an open tab without F5: Delete all, then a sweep', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true, media: true } });
+  const { b, x } = await setup(tc, { db: { media: true } });
   // Three accounts post image 999: the two later posts hide on the tab's own sightings.
   x.set('/home', ['m0', 'm1', 'm2'].map((h, i) => post(50 + i, h, { media: ['999'] })));
   const home = await x.open('/home');
@@ -176,7 +157,7 @@ test('deleted rows stop hiding in an open tab without F5: Delete all, then a swe
 });
 
 test('D3.8 followed accounts never reach behaviour memory', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true, copy: true, everywhere: true, media: true, offender: true } });
+  const { b, x } = await setup(tc, { db: { copy: true, everywhere: true, media: true, offender: true } });
   const fol = (id, h, more) => post(id, h, { following: true, ...more });
   x.set('/home', [fol(20, 'fol1', { media: ['900'] }), fol(21, 'fol2', { media: ['900'] }), post(22, 'stranger', { media: ['901'] })]);
   x.set('/root/status/100', [post(100, 'root'), fol(30, 'fol1', { conv: '100', text: SAME }), fol(31, 'fol2', { conv: '100', text: SAME }),
@@ -191,7 +172,7 @@ test('D3.8 followed accounts never reach behaviour memory', async (tc) => {
 });
 
 test('D4.1 to D4.3: hidden history, statistics, reveal', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true } });
+  const { b, x } = await setup(tc);
   x.set('/home', HOME);
   const home = await x.open('/home');
   await hidden(home, '1');
@@ -233,7 +214,7 @@ const scroller = (x, page, from) => async (seconds) => {
 };
 
 test('D7.3 flushes from one tab are at least 5 s apart', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true } });
+  const { b, x } = await setup(tc);
   await b.sw(() => t.watch());
   x.set('/home', HOME);
   const home = await x.open('/home');
@@ -248,7 +229,7 @@ test('D7.3 flushes from one tab are at least 5 s apart', async (tc) => {
 test('D7.3 one flush as the tab hides, none while it stays hidden', {
   skip: !HEADED && 'headless never hides a tab: PAPIEREN_HEADED=1 runs it; test/content.test.js:406 covers it meanwhile',
 }, async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true }, headless: false });
+  const { b, x } = await setup(tc, { headless: false });
   await b.sw(() => t.watch());
   x.set('/home', HOME);
   const home = await x.open('/home');
@@ -267,7 +248,7 @@ test('D7.3 one flush as the tab hides, none while it stays hidden', {
 });
 
 test('D3.7 and D7.1: no request leaves the extension, none goes anywhere but x.com', async (tc) => {
-  const { b, x } = await setup(tc, { db: { on: true, copy: true, everywhere: true, media: true, offender: true } });
+  const { b, x } = await setup(tc, { db: { copy: true, everywhere: true, media: true, offender: true } });
   x.set('/home', [...HOME, ...MEDIA]);
   x.set('/root/status/100', THREAD);
   const page = await x.open('/home');

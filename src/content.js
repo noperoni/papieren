@@ -31,20 +31,20 @@
     }
   };
 
-  // --- Database (database design, content.js): dormant while settings.db.on is false ---
+  // --- Database (database design, content.js): always live unless it failed ---
 
   let flags = memory.emptyFlags();   // the worker's counts, merged from every answer
   let index = memory.createIndex();  // this tab's own sightings
   let buffer = [];                   // [list, row] for the next db-flush, oldest first
   let counts = {};                   // rule -> { judged, hid } since the last flush
-  let dbFailed = false;              // an { error } answer: run as switched off (Req 7.2)
+  let dbFailed = false;              // an { error } answer: run without the database (Req 7.2)
   let flushTimer = 0;
   let lastFlush = 0;
   let today = '';
   const judgedToday = new Set();
   const hidToday = new Set();
 
-  const dbLive = () => settings.db.on && !dbFailed;
+  const dbLive = () => !dbFailed;
 
   const once = (set, id) => {
     if (set.has(id)) return false;
@@ -147,9 +147,9 @@
   }
 
   // A worker answer: its flags merged and every cell judged again, or the
-  // database failed and the tab runs as switched off until settings change (Req 7.2).
+  // database failed and the tab runs without it until settings change (Req 7.2).
   function answer(r) {
-    if (!r || !settings.db.on) return;
+    if (!r) return;
     if (r.error) {
       dbFailed = true;
       buffer = [];
@@ -161,16 +161,6 @@
   }
 
   const loadFlags = () => message({ type: 'db-flags' }).then(answer);
-
-  // Switched off: the flags, the index and the buffer go.
-  function dbReset() {
-    flags = memory.emptyFlags();
-    index = memory.createIndex();
-    buffer = [];
-    counts = {};
-    clearTimeout(flushTimer);
-    flushTimer = 0;
-  }
 
   // --- Bridge to the page hook ---
 
@@ -187,8 +177,8 @@
   }
 
   // Payloads: tweet -> author map; the viewer's handle is learnt on the way,
-  // for posts the map has not seen (Req 2.4). With the database on, each
-  // tweet new to this tab is observed for the detections switched on.
+  // for posts the map has not seen (Req 2.4). Unless the database failed,
+  // each tweet new to this tab is observed for the detections switched on.
   async function intake(body) {
     const { tweets: found } = xParse.walkTimeline(body);
     const own = new Map(); // record -> its own id: a repost pair is filed under both, the original's is the smaller
@@ -470,8 +460,7 @@
         const was = dbLive();
         settings = Settings.normalize(newValue);
         dbFailed = false; // the next answer says again (Req 7.2)
-        if (!settings.db.on) dbReset();
-        else if (!was) loadFlags();
+        if (!was) loadFlags(); // it had failed: ask the worker again
         stopped = false; // the next permit says again if the worker is still stopped
         placeholder();
         touched = true;
@@ -537,7 +526,7 @@
     settings = Settings.normalize(all.settings);
     for (const [k, s] of signalKeys) s.stored(k, all[k]);
     placeholder();
-    if (settings.db.on) loadFlags();
+    loadFlags();
     if (document.readyState === 'loading') {
       await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }));
     }

@@ -59,7 +59,7 @@
     if (settings.mode === 'allow' && settings.countries.length === 0) {
       lines.push('Show-only mode with nothing ticked: every author with a known country is hidden.');
     }
-    if (settings.db.on && dbError) lines.push(`Database unavailable (${dbError}): running as if switched off.`);
+    if (dbError) lines.push(`Database unavailable (${dbError}): running without it.`);
     if (!settings.lookups) lines.push('Lookups off: filtering uses countries already cached.');
     else if (budget.stopped) lines.push('Lookups stopped after 3 failed attempts. Pause and unpause to retry.');
     else if (budget.cooldownUntil > now) lines.push(`X rate limit: lookups resume at ${time(budget.cooldownUntil)}.`);
@@ -82,12 +82,12 @@
     text: `${JSON.stringify(settings, null, 2)}\n`,
   });
 
-  // What an import brought, in words. Lookups and the database switch never
-  // come from a file (Req 3.7, database Req 1.4), so the note says so.
+  // What an import brought, in words. Lookups never come from a file
+  // (Req 3.7), so the note says so.
   function importNote(settings) {
     const n = settings.countries.length;
     const what = `${settings.mode === 'block' ? 'hide' : 'show only'} ${n} ${n === 1 ? 'country' : 'countries'}`;
-    return `Imported: ${what}. Lookups and the database switch stay as they were.`;
+    return `Imported: ${what}. Lookups stay as they were.`;
   }
 
   const popup = { seenCountries, visibleCountries, countRows, detectionRows, statusLines, dbFile, settingsFile, importNote };
@@ -112,7 +112,7 @@
   const el = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
   const note = (text) => { $('db-note').textContent = text; };
   const fileNote = (text) => { $('file-note').textContent = text; };
-  const why = (error) => (error === 'off' ? 'the database is switched off' : `database unavailable (${error})`);
+  const why = (error) => `database unavailable (${error})`;
   // A worker that is gone (extension reloaded) rejects; answer like a failure.
   const send = (msg) => chrome.runtime.sendMessage(msg).catch((e) => ({ error: String(e?.message ?? e) }));
 
@@ -164,9 +164,6 @@
     $('lookups').checked = current.lookups;
     $('budget').value = String(current.budget);
     $('ticked').textContent = `${current.countries.length} ticked`;
-    $('db-on').checked = current.db.on;
-    // Detections, Retention and export wait for the switch (database Req 3.5).
-    $('db-controls').disabled = !current.db.on;
     for (const box of $('db-detections').querySelectorAll('input')) box.checked = current.db[box.value];
     for (const input of $('db-keep').querySelectorAll('input')) input.value = String(current.db.keep[input.dataset.kind]);
     $('status').replaceChildren(...statusLines({ settings: current, budget, stats, dbError, now: Date.now(), time }).map((t) => el('p', t)));
@@ -214,8 +211,7 @@
   // The worker sweeps first, so no record past its Retention reaches a file
   // (design, Sweep); a failed sweep exports nothing. The popup reads the
   // rows itself and saves through <a download>, as the settings export does.
-  // Exports run one after another; switching off waits for the last one, or
-  // the drop would empty the stores mid-read and the read would recreate them.
+  // Exports run one after another.
   let exporting = Promise.resolve();
   const exportDb = (kind) => (exporting = exporting.then(() => exportNow(kind)));
 
@@ -243,16 +239,6 @@
   async function clearKind(kind) {
     const r = await send({ type: 'db-clear', kind });
     note(r?.error ? `Not deleted: ${why(r.error)}.` : `Deleted the whole ${KIND_NAMES[kind]}.`);
-  }
-
-  // Saved off first, so a late flush from any tab writes nothing; then the
-  // worker deletes the database and keeps the country cache (database Req 1.5).
-  async function switchOff() {
-    $('db-off').hidden = true;
-    await exporting;
-    await saveDb({ on: false });
-    const r = await send({ type: 'db-off' });
-    note(r?.error ? `Switched off, but the database was not deleted: ${r.error}.` : 'Switched off and deleted the database. The country cache stays.');
   }
 
   function wire() {
@@ -292,23 +278,6 @@
       $('lookups').focus();
     });
 
-    // The mirror image: switching the database on is immediate, switching it
-    // off only opens the panel, which offers the export first (database Req 1.4).
-    $('db-on').addEventListener('change', (e) => {
-      if (e.target.checked) {
-        saveDb({ on: true });
-      } else {
-        e.target.checked = true;
-        $('db-off').hidden = false;
-        $('db-off-export').focus();
-      }
-    });
-    $('db-off-export').addEventListener('click', () => exportDb('all'));
-    $('db-off-confirm').addEventListener('click', switchOff);
-    $('db-off-cancel').addEventListener('click', () => {
-      $('db-off').hidden = true;
-      $('db-on').focus();
-    });
     $('db-detections').addEventListener('change', (e) => saveDb({ [e.target.value]: e.target.checked }));
     // An empty or out-of-range field reverts instead of saving: normalize
     // would clamp it to 1 day, and the next sweep would take nearly everything.
@@ -358,13 +327,11 @@
     renderList();
     render();
     // Popup open is one of the sweep's moments (design, Sweep).
-    if (current.db.on) {
-      send({ type: 'db-sweep' }).then((r) => {
-        if (!r?.error || r.error === 'off') return;
-        dbError = r.error;
-        render();
-      });
-    }
+    send({ type: 'db-sweep' }).then((r) => {
+      if (!r?.error) return;
+      dbError = r.error;
+      render();
+    });
   }
 
   load();

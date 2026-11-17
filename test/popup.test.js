@@ -55,17 +55,16 @@ test('statusLines: pause says it all, otherwise every applicable line (Req 7.1)'
   assert.deepEqual(statusLines({ settings: s({ lookups: true }), budget: { cooldownUntil: 500 }, now, time }), []);
 });
 
-test('statusLines: the database line needs the switch on and a dbError (database Req 7.2)', () => {
+test('statusLines: the database line needs a dbError (database Req 7.2)', () => {
   const now = 1_000;
   const time = (ms) => `t${ms}`;
-  const s = (db) => normalize({ countries: ['India'], lookups: true, db });
+  const s = normalize({ countries: ['India'], lookups: true });
 
-  assert.deepEqual(statusLines({ settings: s({ on: true }), dbError: 'QuotaExceededError', now, time }),
-    ['Database unavailable (QuotaExceededError): running as if switched off.']);
-  assert.deepEqual(statusLines({ settings: s({ on: false }), dbError: 'blocked', now, time }), []);
-  assert.deepEqual(statusLines({ settings: s({ on: true }), now, time }), []);
+  assert.deepEqual(statusLines({ settings: s, dbError: 'QuotaExceededError', now, time }),
+    ['Database unavailable (QuotaExceededError): running without it.']);
+  assert.deepEqual(statusLines({ settings: s, now, time }), []);
   // Under the layout line, above the lookups lines.
-  const lines = statusLines({ settings: normalize({ db: { on: true } }), stats: { layout: null }, dbError: 'blocked', now, time });
+  const lines = statusLines({ settings: normalize({}), stats: { layout: null }, dbError: 'blocked', now, time });
   assert.equal(lines.length, 3);
   assert.match(lines[1], /^Database unavailable \(blocked\)/);
   assert.match(lines[2], /^Lookups off/);
@@ -117,7 +116,7 @@ test('settingsFile: dated JSON that imports back unchanged (Req 6.4)', () => {
 });
 
 test('importNote: mode and country count, and what a file never changes (Req 3.7)', () => {
-  const tail = ' Lookups and the database switch stay as they were.';
+  const tail = ' Lookups stay as they were.';
   assert.equal(importNote(normalize({ countries: ['India', 'Peru'] })), `Imported: hide 2 countries.${tail}`);
   assert.equal(importNote(normalize({ mode: 'allow', countries: ['Peru'] })), `Imported: show only 1 country.${tail}`);
   assert.equal(importNote(normalize({})), `Imported: hide 0 countries.${tail}`);

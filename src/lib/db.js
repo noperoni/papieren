@@ -26,8 +26,8 @@
     r.onerror = () => reject(r.error);
   });
 
-  // The cached connection. A versionchange (another context deleting the
-  // database) or a close drops it, so the next call reopens.
+  // The cached connection. A versionchange (another context upgrading or
+  // deleting the database) or a close drops it, so the next call reopens.
   let conn = null;
 
   function open() {
@@ -120,20 +120,7 @@
   // Empties one store or several, in one transaction.
   const clear = (stores) => tx([].concat(stores), 'readwrite', (t) => Promise.all([].concat(stores).map((s) => req(t.objectStore(s).clear()))));
 
-  // Closes the cached connection, then deletes the database. Other open
-  // connections close on their versionchange.
-  async function drop() {
-    const p = conn;
-    conn = null;
-    if (p) (await p.catch(() => null))?.close();
-    await new Promise((resolve, reject) => {
-      const r = indexedDB.deleteDatabase(NAME);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
-    });
-  }
-
-  const db = { NAME, VERSION, open, tx, put, get, count, each, deleteWhere, clear, drop };
+  const db = { NAME, VERSION, open, tx, put, get, count, each, deleteWhere, clear };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.db = db;
