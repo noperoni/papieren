@@ -7,8 +7,9 @@ import './lib/settings.js';
 import './lib/memory.js';
 import './lib/records.js';
 import './lib/db.js';
+import './lib/packs.js';
 
-const { budget, settings, records, db } = globalThis.Papieren;
+const { budget, settings, records, db, packs } = globalThis.Papieren;
 
 const STATE_KEY = 'budget';      // chrome.storage.session: cleared with the browser session (Req 7.1)
 const DB_ERROR = 'dbError';      // chrome.storage.session: why the database failed (database Req 7.2)
@@ -21,6 +22,8 @@ const AMBER = '#b06000';
 const OFF = { error: 'off' };
 const FLUSH_STORES = ['memory', 'history', 'stats', 'flags'];
 const CLEAR = { memory: ['memory', 'flags'], history: ['history'], stats: ['stats'] }; // flags derive from memory
+// One line per Built_in_Pack, each a file in papieren/packs/ (packs Req 4.1, 8.2).
+const BUILTIN = ['engagement-bait', 'ragebait', 'ai-tone', 'aggregator'];
 
 // Two tabs can ask at once and every op is read-modify-write on session
 // storage, so ops run one after another. A failed op does not block the next.
@@ -191,6 +194,34 @@ async function startup() {
   await serial(() => withDb((conf) => sweep(conf, Date.now())));
 }
 
+// On install and every update: each Built_in_Pack read from the package
+// itself, never the network (packs Req 6.5, 8.1), validated and written to
+// packs:builtin. A file that fails is logged and left out; packs:user is
+// never touched, so every Pack_Copy survives a release (Req 4.4). The
+// settings keep only enabled ids that still exist.
+async function copyBuiltins() {
+  const out = [];
+  for (const id of BUILTIN) {
+    try {
+      const r = packs.validate(await (await fetch(chrome.runtime.getURL(`packs/${id}.json`))).text(), { builtin: true });
+      if (!r.ok) throw new Error(r.reason);
+      out.push(r.pack);
+    } catch (e) {
+      console.error(`Papieren: built-in pack "${id}" left out:`, e.message);
+    }
+  }
+  await chrome.storage.local.set({ 'packs:builtin': out });
+  const stored = await chrome.storage.local.get(['settings', 'packs:user']);
+  const on = stored.settings?.packs?.on;
+  if (!Array.isArray(on)) return;
+  const user = Array.isArray(stored['packs:user']) ? stored['packs:user'] : [];
+  const ids = new Set([...out, ...user].map((p) => p?.id));
+  const kept = on.filter((id) => ids.has(id));
+  if (kept.length < on.length) {
+    await chrome.storage.local.set({ settings: { ...stored.settings, packs: { ...stored.settings.packs, on: kept } } });
+  }
+}
+
 const handlers = {
   // { handle } -> Permit (Req 3.1, 3.5, 3.9)
   permit: (msg) => serial(async () => {
@@ -295,4 +326,4 @@ chrome.storage.local.onChanged.addListener((changes) => {
 });
 
 chrome.runtime.onStartup.addListener(startup);
-chrome.runtime.onInstalled.addListener(startup);
+chrome.runtime.onInstalled.addListener(() => Promise.all([copyBuiltins(), startup()]));

@@ -142,6 +142,10 @@
 
   // Intake: score each new record now, off the mutation path. The viewer
   // never adds to a Score, as rules.evaluate never judges them.
+  // ponytail: one pass over the whole payload. At 20 Packs of 300 Tells that
+  // is about 2.5 ms per Post, 7.5 ms on the first payload while V8 compiles
+  // the RegExps (bench-packs.test.js); spread it over idle callbacks
+  // if a long task shows on the burner.
   function prepare(records, ctx) {
     const list = enabledPacks(ctx.settings);
     if (!list.length) return;

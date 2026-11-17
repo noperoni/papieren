@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Papieren Pack",
+  "description": "One Pack: weighted Tells and a Threshold. A Post is hidden when the weights of the Tells it meets add up to the Threshold, each Tell counted once. At most 300 Tells over tells and every language, in a file of at most 256 KB. Papieren's own validator has the final word; this schema documents it.",
+  "type": "object",
+  "required": ["papierenPack", "id", "name", "kind", "description", "version", "threshold"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "papierenPack": { "const": 1, "description": "The file format version." },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "description": "Unique among your Packs; a Pack of your own may not take a built-in Pack's id."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "kind": {
+      "enum": ["junk", "topic"],
+      "description": "junk: a kind of post, such as engagement bait; topic: a subject, such as football. Both match the same way."
+    },
+    "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "integer", "minimum": 1, "description": "Raised on every save." },
+    "threshold": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "from": {
+      "description": "Only on a copy of a built-in Pack: the built-in's id and version it was copied from.",
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "tells": {
+      "description": "Tells applied whatever the Post's language: name, bio, shape, media and context.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/tell" }
+    },
+    "languages": {
+      "description": "Text Tells per language code as X gives it, for example en or pt-br, applied only to Posts in that language.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z]{2,3}(-[a-z0-9]+)?$" },
+      "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/textTell" } }
+    }
+  },
+  "$defs": {
+    "weight": {
+      "description": "A whole number from -10 to 10, not 0. A negative weight pulls a Post back.",
+      "type": "integer",
+      "minimum": -10,
+      "maximum": 10,
+      "not": { "const": 0 }
+    },
+    "phrase": {
+      "description": "Whole words, ignoring case, after Unicode NFKC folding; a run of spaces matches any run of whitespace.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "pattern": {
+      "description": "A JavaScript regular expression, matched with flags iu against the folded text. Refused: a backreference; more than three quantifiers, or more than one that repeats (*, +, {m,}, {m,n}); a repeated group holding a quantifier or |.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "textTell": {
+      "description": "The Post's own visible text, at most 500 characters; a quote is judged on its own text only.",
+      "type": "object",
+      "required": ["w", "on"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "const": "text" },
+        "phrase": { "$ref": "#/$defs/phrase" },
+        "pattern": { "$ref": "#/$defs/pattern" }
+      },
+      "oneOf": [{ "required": ["phrase"] }, { "required": ["pattern"] }]
+    },
+    "authorTell": {
+      "description": "The Author's display name or bio; for a repost, both Authors'.",
+      "type": "object",
+      "required": ["w", "on"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "enum": ["name", "bio"] },
+        "phrase": { "$ref": "#/$defs/phrase" },
+        "pattern": { "$ref": "#/$defs/pattern" }
+      },
+      "oneOf": [{ "required": ["phrase"] }, { "required": ["pattern"] }]
+    },
+    "shapeTell": {
+      "description": "emoji and hashtags: counts; caps: the share of capital letters, 0 to 1, known only with 20 cased letters or more; lines: non-empty lines per sentence; length: characters.",
+      "type": "object",
+      "required": ["w", "on", "measure"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "const": "shape" },
+        "measure": { "enum": ["emoji", "hashtags", "caps", "lines", "length"] },
+        "min": { "type": "number", "minimum": 0 },
+        "max": { "type": "number", "minimum": 0 }
+      },
+      "anyOf": [{ "required": ["min"] }, { "required": ["max"] }],
+      "if": { "properties": { "measure": { "const": "caps" } } },
+      "then": { "properties": { "min": { "maximum": 1 }, "max": { "maximum": 1 } } }
+    },
+    "mediaTell": {
+      "description": "has: the Post carries that kind of media or a link; domain: a link to that host or any of its subdomains.",
+      "type": "object",
+      "required": ["w", "on"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "const": "media" },
+        "has": { "enum": ["image", "video", "gif", "poll", "link"] },
+        "domain": { "type": "string" }
+      },
+      "oneOf": [{ "required": ["has"] }, { "required": ["domain"] }]
+    },
+    "contextTell": {
+      "type": "object",
+      "required": ["w", "on", "is"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "const": "context" },
+        "is": { "enum": ["reply", "quote", "repost", "original"] }
+      }
+    },
+    "tell": {
+      "oneOf": [
+        { "$ref": "#/$defs/authorTell" },
+        { "$ref": "#/$defs/shapeTell" },
+        { "$ref": "#/$defs/mediaTell" },
+        { "$ref": "#/$defs/contextTell" }
+      ]
+    }
+  }
+}

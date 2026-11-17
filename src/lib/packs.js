@@ -340,16 +340,14 @@
   const needsEdge = (c) => /[\p{L}\p{N}]/u.test(c) && !NO_SPACES.test(c);
   const escape = (s) => s.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
 
-  function phraseSource(k) {
-    const cps = [...k];
-    const before = needsEdge(cps[0]) ? '(?<![\\p{L}\\p{N}\\p{M}])' : '';
-    const after = needsEdge(cps.at(-1)) ? '(?![\\p{L}\\p{N}\\p{M}])' : '';
-    return `${before}(${k.split(' ').map(escape).join('\\s+')})${after}`;
-  }
+  const phraseSource = (k) => `(${k.split(' ').map(escape).join('\\s+')})`;
 
   // One alternation per input, longest Phrase first. At one position only the
   // longest can match, so `implied[i]` lists the shorter Phrases that are
-  // whole-word prefixes of Phrase i and so are met whenever it is.
+  // whole-word prefixes of Phrase i and so are met whenever it is. The word
+  // edges are checked by `scan`, not by lookarounds in the alternation: a
+  // \p{L} class per Phrase cost about 190 ms at the first exec of a
+  // 200-Phrase group, against 6 ms without (benchmark, 2026-11-17).
   function phraseGroup(input, phrases) {
     phrases.sort((a, b) => b.k.length - a.k.length);
     const implied = phrases.map((p) => phrases.flatMap((q, j) => {
@@ -357,8 +355,9 @@
       const next = String.fromCodePoint(p.k.codePointAt(q.k.length));
       return needsEdge([...q.k].at(-1)) && WORD.test(next) ? [] : [j];
     }));
+    const edges = phrases.map((p) => [needsEdge(String.fromCodePoint(p.k.codePointAt(0))), needsEdge([...p.k].at(-1))]);
     const re = new RegExp(phrases.map((p) => phraseSource(p.k)).join('|'), 'giu');
-    return { input, re, w: phrases.map((p) => p.w), implied };
+    return { input, re, w: phrases.map((p) => p.w), implied, edges };
   }
 
   function compileList(tells) {
@@ -398,11 +397,23 @@
 
   // Adds to `met` the index of every Phrase found in s. Matches may overlap:
   // the next search starts one code point after the last match's start.
+  // A word edge at a match start fails every Phrase there, which all begin
+  // with the same character; one at its end fails only the longest, whose
+  // whole-word prefixes are then the Phrases the old lookarounds let match.
+  const isWord = (c) => c !== undefined && WORD.test(c);
+  const cpBefore = (s, i) => [...s.slice(Math.max(0, i - 2), i)].at(-1);
+  const cpAt = (s, j) => (j < s.length ? String.fromCodePoint(s.codePointAt(j)) : undefined);
   function scan(group, s, met) {
-    group.re.lastIndex = 0;
-    for (let m; (m = group.re.exec(s));) {
-      met.add(m.indexOf(m[0], 1) - 1);
-      group.re.lastIndex = m.index + (s.codePointAt(m.index) > 0xffff ? 2 : 1);
+    const { re, edges, implied } = group;
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(s));) {
+      const i = m.indexOf(m[0], 1) - 1;
+      const [before, after] = edges[i];
+      if (!(before && isWord(cpBefore(s, m.index)))) {
+        if (after && isWord(cpAt(s, m.index + m[0].length))) for (const j of implied[i]) met.add(j);
+        else met.add(i);
+      }
+      re.lastIndex = m.index + (s.codePointAt(m.index) > 0xffff ? 2 : 1);
     }
   }
 
@@ -468,7 +479,7 @@
   }
 
   const packs = {
-    MAX_TELLS, MAX_FILE, fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score,
+    KINDS, MEASURES, MEDIA, CONTEXTS, MAX_TELLS, MAX_FILE, fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score,
   };
 
   globalThis.Papieren ??= {};

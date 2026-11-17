@@ -1,0 +1,43 @@
+{
+  "$schema": "./pack.schema.json",
+  "papierenPack": 1,
+  "id": "aggregator",
+  "name": "Aggregator style",
+  "kind": "junk",
+  "description": "News-relay posting: BREAKING and JUST IN headlines, siren emoji, alert-style account names.",
+  "version": 1,
+  "threshold": 6,
+  "tells": [
+    { "w": 2, "on": "name", "pattern": "\\b(?:news|alerts?|updates?|breaking|intel|wire|headlines)\\b" },
+    { "w": 1, "on": "name", "pattern": "\\b(?:insider|report|daily|tracker|hq|index|central|media|24/7)\\b" },
+    { "w": 2, "on": "bio", "pattern": "\\b(?:breaking|latest|real-time|realtime|24/7|global) (?:news|updates|alerts|headlines|coverage)\\b" },
+    { "w": 2, "on": "bio", "phrase": "aggregator" },
+    { "w": 1, "on": "bio", "phrase": "not affiliated" },
+    { "w": 1, "on": "bio", "phrase": "fan account" },
+    { "w": 1, "on": "bio", "phrase": "turn on notifications" },
+    { "w": 1, "on": "bio", "pattern": "\\bdm (?:for|4) (?:promo|promotions|ads|business|submissions)\\b" },
+    { "w": 1, "on": "shape", "measure": "caps", "min": 0.5 },
+    { "w": -2, "on": "context", "is": "reply" }
+  ],
+  "languages": {
+    "en": [
+      { "w": 3, "on": "text", "pattern": "\\b(?:breaking|just in|developing|urgent|exclusive) ?:" },
+      { "w": 2, "on": "text", "phrase": "breaking news" },
+      { "w": 2, "on": "text", "phrase": "🚨" },
+      { "w": 2, "on": "text", "pattern": "\\b(?:according to|per) (?:reports|sources|local media|officials|police)\\b" },
+      { "w": 2, "on": "text", "pattern": "\\bhere['’]?s what we know\\b" },
+      { "w": 2, "on": "text", "pattern": "\\b(?:more (?:details )?to follow|developing story|story developing)\\b" },
+      { "w": 2, "on": "text", "pattern": "\\bfollow @\\w+ for\\b" },
+      { "w": 1, "on": "text", "pattern": "^\\W{0,6}(?:new|update|report|watch|alert|live|confirmed|official) ?:" },
+      { "w": 1, "on": "text", "pattern": "[\\u{1F1E6}-\\u{1F1FF}]{2}" },
+      { "w": 1, "on": "text", "phrase": "🔴" },
+      { "w": 1, "on": "text", "phrase": "\u26a0" },
+      { "w": 1, "on": "text", "pattern": "\\bsources (?:say|tell|confirm|report)\\b" },
+      { "w": 1, "on": "text", "phrase": "reportedly" },
+      { "w": 1, "on": "text", "phrase": "stay tuned" },
+      { "w": 1, "on": "text", "pattern": "\\b(?:footage|video) (?:shows|of)\\b" },
+      { "w": 1, "on": "text", "pattern": "\\bvia @\\w" },
+      { "w": 1, "on": "text", "pattern": "\\bsource ?:" }
+    ]
+  }
+}

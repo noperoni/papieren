@@ -10,10 +10,21 @@ const vm = require('node:vm');
 
 const SRC = path.join(__dirname, '..', 'src');
 const SOURCE = fs.readFileSync(path.join(SRC, 'background.js'), 'utf8');
-const IMPORTS = /^import '\.\/lib\/(budget|settings|memory|records|db)\.js';\n/gm;
+const IMPORTS = /^import '\.\/lib\/(budget|settings|memory|records|db|packs)\.js';\n/gm;
 const BODY = SOURCE.replace(IMPORTS, '');
-const LIBS = ['budget.js', 'settings.js', 'memory.js', 'records.js', 'db.js'].map((f) => fs.readFileSync(path.join(SRC, 'lib', f), 'utf8'));
+const LIBS = ['budget.js', 'settings.js', 'memory.js', 'records.js', 'db.js', 'packs.js'].map((f) => fs.readFileSync(path.join(SRC, 'lib', f), 'utf8'));
 const LOOKUPS_ON = { settings: { lookups: true } };
+const PACKS = path.join(__dirname, '..', 'packs');
+const BUILTIN = ['engagement-bait', 'ragebait', 'ai-tone', 'aggregator'];
+
+// The package's own files, as the worker's fetch of a getURL reads them;
+// `files` replaces one by its path, a missing one rejects.
+const packageFetch = (files = {}) => async (url) => {
+  const rel = url.replace('chrome-extension://papieren/', '');
+  const text = rel in files ? files[rel] : fs.readFileSync(path.join(PACKS, '..', rel), 'utf8');
+  if (text === null) throw new TypeError('Failed to fetch');
+  return { text: async () => text };
+};
 
 function slot() {
   const listeners = [];
@@ -46,18 +57,20 @@ function fakeArea(initial = {}) {
   };
 }
 
-function loadWorker({ local = {}, session = fakeArea(), now = 1_000_000 } = {}) {
+function loadWorker({ local = {}, session = fakeArea(), now = 1_000_000, files } = {}) {
   const badge = [];
+  const errors = [];
   const chrome = {
     storage: { local: fakeArea(local), session },
-    runtime: { onMessage: slot(), onStartup: slot(), onInstalled: slot() },
+    runtime: { onMessage: slot(), onStartup: slot(), onInstalled: slot(), getURL: (p) => `chrome-extension://papieren/${p}` },
     action: {
       setBadgeText: (d) => badge.push({ text: d.text, tabId: d.tabId }),
       setBadgeBackgroundColor: (d) => badge.push({ color: d.color, tabId: d.tabId }),
     },
   };
   const clock = { now };
-  const context = vm.createContext({ chrome, Date: { now: () => clock.now } });
+  const console = { error: (...args) => errors.push(args.join(' ')) };
+  const context = vm.createContext({ chrome, Date: { now: () => clock.now }, fetch: packageFetch(files), console, TextEncoder, URL });
   for (const lib of LIBS) vm.runInContext(lib, context);
   vm.runInContext(BODY, context, { filename: 'background.js' });
 
@@ -68,13 +81,13 @@ function loadWorker({ local = {}, session = fakeArea(), now = 1_000_000 } = {}) 
   });
   const state = () => session.data.get('budget');
   const fail = () => send({ type: 'report', result: { ok: false, status: 403 } });
-  return { chrome, clock, badge, send, state, fail };
+  return { chrome, clock, badge, errors, send, state, fail };
 }
 
 const cacheOf = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`c:user${i}`, { c: 'Spain', a: true, k: 'unverified', t: i }]));
 
-test('imports only its five libs, registers every listener at load, holds no timer (Req 9.3, 9.5)', () => {
-  assert.equal(SOURCE.match(IMPORTS).length, 5);
+test('imports only its six libs, registers every listener at load, holds no timer (Req 9.3, 9.5)', () => {
+  assert.equal(SOURCE.match(IMPORTS).length, 6);
   assert.doesNotMatch(BODY, /^\s*import\b/m);
   assert.doesNotMatch(SOURCE, /set(Timeout|Interval)/);
   const { chrome } = loadWorker();
@@ -172,7 +185,7 @@ test('startup: a cache at the cap is counted, never loaded', async () => {
   const w = loadWorker({ local: cacheOf(50_000) });
   await w.chrome.runtime.onInstalled.listeners[0]();
   assert.equal(w.chrome.storage.local.stats.getAll, 0);
-  assert.equal(w.chrome.storage.local.data.size, 50_000);
+  assert.equal([...w.chrome.storage.local.data.keys()].filter((k) => k.startsWith('c:')).length, 50_000);
 });
 
 test('prune: a quota error drops the oldest 20% of the cache', async () => {
@@ -188,4 +201,48 @@ test('unknown or inherited message types get no reply', async () => {
   assert.equal(await w.send({ type: 'block', handle: 'ivan' }), 'no reply');
   assert.equal(await w.send({ type: 'toString' }), 'no reply');
   assert.equal(await w.send(null), 'no reply');
+});
+
+// ---- built-in Packs (packs Req 4.1, 4.4, 6.5, 8.1, 8.2) ----
+
+const installed = async (w) => {
+  await w.chrome.runtime.onInstalled.listeners[0]();
+  return w.chrome.storage.local.data;
+};
+
+test('install: every built-in read from the package, validated, written to packs:builtin in list order', async () => {
+  assert.deepEqual([...BUILTIN].sort(), fs.readdirSync(PACKS).filter((f) => f.endsWith('.json') && !['example.json', 'pack.schema.json'].includes(f)).map((f) => f.slice(0, -5)).sort());
+  const data = await installed(loadWorker());
+  const stored = data.get('packs:builtin');
+  assert.deepEqual(stored.map((p) => p.id), BUILTIN);
+  assert.ok(stored.every((p) => !('$schema' in p) && p.papierenPack === 1));
+  assert.equal(data.has('settings'), false);
+  assert.equal(data.has('packs:user'), false);
+});
+
+test('update: built-ins replaced, user Packs untouched, packs.on keeps only ids that still exist (Req 4.4)', async () => {
+  const user = [{ papierenPack: 1, id: 'mine', name: 'Mine', from: { id: 'ragebait', version: 1 }, tells: [] }];
+  const settings = { lookups: true, countries: ['ES'], packs: { mode: 'allbut', on: ['engagement-bait', 'gone', 'mine'] } };
+  const w = loadWorker({ local: { 'packs:builtin': [{ id: 'gone', version: 9 }], 'packs:user': user, settings } });
+  const data = await installed(w);
+  assert.deepEqual(data.get('packs:builtin').map((p) => [p.id, p.version]), BUILTIN.map((id) => [id, 1]));
+  assert.deepEqual(data.get('packs:user'), user);
+  assert.deepEqual(data.get('settings'), { ...settings, packs: { mode: 'allbut', on: ['engagement-bait', 'mine'] } });
+});
+
+test('update: settings are not rewritten when every enabled id still exists', async () => {
+  const w = loadWorker({ local: { settings: { packs: { mode: 'block', on: ['ragebait'] } } } });
+  const writes = [];
+  w.chrome.storage.local.onChanged.addListener((c) => writes.push(...Object.keys(c)));
+  await installed(w);
+  assert.deepEqual(writes, ['packs:builtin']);
+});
+
+test('a broken or missing built-in file is logged and left out; the others are written', async () => {
+  const w = loadWorker({ files: { 'packs/ragebait.json': '{"papierenPack": 2}', 'packs/ai-tone.json': null } });
+  const data = await installed(w);
+  assert.deepEqual(data.get('packs:builtin').map((p) => p.id), ['engagement-bait', 'aggregator']);
+  assert.equal(w.errors.length, 2);
+  assert.match(w.errors[0], /"ragebait" left out: Unknown pack format/);
+  assert.match(w.errors[1], /"ai-tone" left out: Failed to fetch/);
 });

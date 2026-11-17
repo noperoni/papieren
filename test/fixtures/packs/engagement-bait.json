@@ -1,0 +1,18 @@
+{
+  "hide": [
+    { "text": "Like if you agree 🙏 Follow me for more 👇" },
+    { "text": "RT if you remember this. Only real fans will know 🔥" },
+    { "text": "1 like = 1 prayer 🙏 Type Amen and pass it on" },
+    { "text": "Giveaway time! 🎁 Follow + RT to win. Must be following to enter. #giveaway #followback #f4f #ifb #win", "name": "Lucky Drops IFB" },
+    { "text": "I follow back 💯 Let's be mutuals! Drop your @ below 👇", "reply": true, "name": "Jess 🌸 follow back", "bio": "100% follow back | F4F | grow together" },
+    { "text": "I spent 400 hours building this prompt library. Comment \"PROMPTS\" and I'll DM you the full guide. Must follow so I can DM. Bookmark this 🔖" }
+  ],
+  "show": [
+    { "text": "My grandma used to end her church newsletter with \"like if you agree\". Different times." },
+    { "text": "Who else is watching the eclipse tonight? Clear skies here." },
+    { "text": "We shipped the new release today. Notes are in the repo, and feedback is welcome in the issues." },
+    { "text": "Thoughts? I think the second draft reads better than the first." },
+    { "text": "Agree or disagree, the referee got that one wrong.", "reply": true },
+    { "text": "Tag a friend who still owes you lunch 😄" }
+  ]
+}
