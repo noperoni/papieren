@@ -283,7 +283,7 @@ test('6.4 settings file: dated export, import restores and says what came in', a
   assert.equal(file.name, `papieren-settings-${today()}.json`);
   assert.equal(await p.locator('#file-note').textContent(), `Exported ${file.name}.`);
   const saved = JSON.parse(file.text);
-  assert.deepEqual(Object.keys(saved), ['v', 'mode', 'countries', 'placeholder', 'paused', 'lookups', 'budget', 'db']);
+  assert.deepEqual(Object.keys(saved), ['v', 'mode', 'countries', 'placeholder', 'paused', 'lookups', 'budget', 'db', 'packs']);
 
   const put = (name, text) => p.locator('#import').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) });
   const mode = () => b.sw(() => t.peek('settings').then((s) => s.mode));

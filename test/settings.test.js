@@ -42,7 +42,7 @@ test('import: a good file replaces settings, duplicates dropped, budget clamped'
   assert.equal(r.ok, true);
   assert.deepEqual(r.settings, {
     v: 1, mode: 'allow', countries: ['France', 'Unknown'], placeholder: 'remove', paused: false, lookups: false, budget: 45,
-    db: normalize(undefined).db,
+    db: normalize(undefined).db, packs: { mode: 'block', on: [] },
   });
 });
 
@@ -125,5 +125,42 @@ test('db import: a malformed block rejects the whole file', () => {
     const r = parseImport(file(over), DEFAULTS);
     assert.equal(r.ok, false, JSON.stringify(over));
     assert.equal(typeof r.reason, 'string');
+  }
+});
+
+// --- Packs block (packs Req 4.2, 6.3) ---
+
+test('packs defaults: Blocklist, every Pack off', () => {
+  assert.deepEqual(normalize(undefined).packs, { mode: 'block', on: [] });
+  assert.deepEqual(DEFAULTS.packs, { mode: 'block', on: [] });
+});
+
+test('packs normalize: bad mode falls back; duplicates, bad ids and ids beyond 100 dropped', () => {
+  assert.deepEqual(normalize({ packs: { mode: 'allbut', on: ['ragebait', 'ragebait', 'Bad', 7, '', 'ai-tone'] } }).packs,
+    { mode: 'allbut', on: ['ragebait', 'ai-tone'] });
+  assert.equal(normalize({ packs: { mode: 'allow' } }).packs.mode, 'block');
+  assert.deepEqual(normalize({ packs: [] }).packs, { mode: 'block', on: [] });
+  const many = Array.from({ length: 120 }, (_, i) => `p${i}`);
+  assert.deepEqual(normalize({ packs: { on: many } }).packs.on, many.slice(0, 100));
+});
+
+test('packs import: a good block is taken, ids that do not exist here dropped', () => {
+  const r = parseImport(file({ packs: { mode: 'allbut', on: ['ragebait', 'mine', 'gone'] } }), DEFAULTS, ['ragebait', 'mine', 'other']);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.settings.packs, { mode: 'allbut', on: ['ragebait', 'mine'] });
+  assert.deepEqual(parseImport(file({ packs: { on: ['ragebait'] } }), DEFAULTS).settings.packs, { mode: 'block', on: [] });
+});
+
+test('packs import: a file without packs keeps the current block', () => {
+  const cur = normalize({ packs: { mode: 'allbut', on: ['ragebait'] } });
+  assert.deepEqual(parseImport(file(), cur, []).settings.packs, cur.packs);
+});
+
+test('packs import: a bad block is rejected whole', () => {
+  const ids = Array.from({ length: 101 }, (_, i) => `p${i}`);
+  for (const packs of [[], 'on', { mode: 'allow' }, { on: 'ragebait' }, { on: ['Bad'] }, { on: ids }]) {
+    const r = parseImport(file({ packs }), DEFAULTS, ids);
+    assert.equal(r.ok, false, JSON.stringify(packs).slice(0, 60));
+    assert.match(r.reason, /^packs/);
   }
 });
