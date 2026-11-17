@@ -224,7 +224,7 @@ Packs judge what X already sends, so no P row needs lookups. The editor is the p
 | P7.2 | Unit | `signal-packs.test.js` "Blocklist: the Pack exceeding its Threshold by the most; a tie goes to the earlier in the list (Req 2.1, 7.2)". | Passes. |
 | P7.3 | L, Auto | As P2.2. | As P2.2. |
 | P7.4 | L, Auto | The popup on P1.1's tab, then on P2.2's. | "Hidden on this page" has a row "Engagement bait 1", then "Outside your packs" with the count. |
-| P8.1 | L, Auto; B | The x.com tab's Network panel with Packs on, lookups off; on the burner with lookups on (task 11). | No request from Papieren but lookups. |
+| P8.1 | L, Auto; B | The x.com tab's Network panel with Packs on, lookups off; on the burner with lookups on (the burner trial). | No request from Papieren but lookups. |
 | P8.2 | Unit | `builtin.test.js` "every Pack file passes validate under its own file name…"; adding a built-in is one line in `background.js` `BUILTIN` and its file. | Passes. |
 | P8.3 | Unit; B | `bench-packs.test.js` "Req 8.3: the batch reads the memo inside 8 ms for 100 Posts…"; one DevTools performance look on the burner at intake (task 11). | Passes; no long task at intake on the burner. |
 
