@@ -4,6 +4,11 @@
 // Shared-lib pattern, see rules.js.
 (() => {
   const THRESHOLDS = Object.freeze({ copy: 3, everywhere: 5, media: 3, offender: 5 }); // Glossary
+  // The count from which the worker keeps a flag: the detection's threshold,
+  // except detections and Pack hides per Author, which account Tells read
+  // from the first (packs design, account Tells).
+  const FLAG_MIN = Object.freeze({ ...THRESHOLDS, offender: 1, packs: 1 });
+  const OFFENCES = 2;             // the offences account Tell: 2 or more detections
   const MIN_TEXT = 20;            // characters, after normalize()
   const EVERYWHERE_MS = 24 * 60 * 60 * 1000;
   const INDEX_MAX = 5000;         // keys per map (Req 7.4)
@@ -44,8 +49,8 @@
 
   // The tab's own sightings, keyed as the worker's flags are. Every map keeps
   // its newest INDEX_MAX keys.
-  const createIndex = () => ({ copy: new Map(), conv: new Map(), media: new Map(), offence: new Map() });
-  const emptyFlags = () => ({ copy: {}, everywhere: {}, media: {}, offender: {} });
+  const createIndex = () => ({ copy: new Map(), conv: new Map(), media: new Map(), offence: new Map(), pack: new Map() });
+  const emptyFlags = () => ({ copy: {}, everywhere: {}, media: {}, offender: {}, packs: {} });
 
   function touch(map, key, make) {
     let v = map.get(key);
@@ -56,12 +61,13 @@
     return v;
   }
 
-  // sighting: { kind: 'copy' | 'conv' | 'media' | 'offence', key, author, tweet?, t },
+  // sighting: { kind: 'copy' | 'conv' | 'media' | 'offence' | 'pack', key, author, tweet?, rule?, t },
   // the same shape the flush sends. key: fingerprint, conversation id, media id or tweet id.
+  // An offence is a behaviour detection, a pack row a Pack hide: both map tweet -> rule.
   function observe(index, s) {
     if (s.kind === 'copy') touch(index.copy, s.key, () => new Set()).add(s.author);
     else if (s.kind === 'conv') touch(index.conv, s.author, () => new Map()).set(s.key, s.t);
-    else if (s.kind === 'offence') touch(index.offence, s.author, () => new Set()).add(s.key);
+    else if (s.kind === 'offence' || s.kind === 'pack') touch(index[s.kind], s.author, () => new Map()).set(s.key, s.rule);
     else if (s.kind === 'media') {
       const m = touch(index.media, s.key, () => ({ authors: new Set(), first: s.tweet }));
       m.authors.add(s.author);
@@ -83,6 +89,15 @@
     let n = 0;
     for (const t of index.conv.get(author)?.values() ?? []) if (now - t <= EVERYWHERE_MS) n += 1;
     return n;
+  }
+
+  // A worker flag ({ n, first } or, from before account Tells, a bare n) and the
+  // tab's rows (tweet -> rule) as one: the larger count, never added, and
+  // the earliest tweet per rule.
+  function tally(flag, local) {
+    const first = { ...(flag?.first ?? {}) };
+    for (const [tweet, rule] of local ?? []) if (earlier(tweet, first[rule])) first[rule] = tweet;
+    return { n: Math.max(typeof flag === 'number' ? flag : flag?.n ?? 0, local?.size ?? 0), first };
   }
 
   const hit = (det, user, n) => ({ rule: `bm:${det}`, handle: user.handle, n });
@@ -123,24 +138,48 @@
     if (on.offender) {
       for (const u of [post.author, post.reposter]) {
         if (!judged(u)) continue;
-        const n = Math.max(flags.offender[u.id] ?? 0, index.offence.get(u.id)?.size ?? 0);
+        const { n } = tally(flags.offender[u.id], index.offence.get(u.id));
         if (n >= THRESHOLDS.offender) return hit('offender', u, n);
       }
     }
     return null;
   }
 
+  // What the account Tells read of one Author's behaviour, against the Post
+  // being judged (packs design, account Tells): Reply_Everywhere, 2
+  // or more behaviour detections, and the rules that caught an older Post of
+  // theirs, a detection (copy, recycled) or a Pack hide (hidden: Pack ids).
+  // The Post's own record never counts against it. Undefined for the viewer,
+  // a followed Author and one without an id, as in judge() (Req 3.8).
+  function account(u, flags, index, ctx) {
+    const { now, viewerId, tweetId } = ctx;
+    if (!u?.id || u.followed || u.id === viewerId) return undefined;
+    const older = (first) => first !== undefined && earlier(first, tweetId);
+    const is = new Set();
+    if (Math.max(flags.everywhere[u.id] ?? 0, convCount(index, u.id, now)) >= THRESHOLDS.everywhere) is.add('everywhere');
+    const offences = tally(flags.offender[u.id], index.offence.get(u.id));
+    if (offences.n >= OFFENCES) is.add('offences');
+    if (older(offences.first['bm:copy'])) is.add('copy');
+    if (older(offences.first['bm:media'])) is.add('recycled');
+    const hides = tally(flags.packs[u.id], index.pack.get(u.id)).first;
+    const hidden = new Set(Object.keys(hides).filter((rule) => older(hides[rule])).map((rule) => rule.slice('pack:'.length)));
+    return { is, hidden };
+  }
+
   const WHY = {
     'bm:copy': (n) => `copy-paste reply, ${n} accounts`,
     'bm:everywhere': (n) => `replies everywhere, ${n} conversations in 24 h`,
     'bm:media': (n) => `recycled media, ${n} accounts`,
-    'bm:offender': (n) => `repeat offender, hidden ${n} times`,
+    'bm:offender': (n) => `repeat offender, ${n} detections`,
   };
 
   // One line naming the handle and the detection (Req 6.1).
   const label = (h) => `Hidden: @${h.handle} · ${WHY[h.rule](h.n)} (click to show)`;
 
-  const memory = { THRESHOLDS, MIN_TEXT, EVERYWHERE_MS, normalize, fingerprint, dayOf, earlier, createIndex, emptyFlags, observe, merge, judge, label };
+  const memory = {
+    THRESHOLDS, FLAG_MIN, OFFENCES, MIN_TEXT, EVERYWHERE_MS,
+    normalize, fingerprint, dayOf, earlier, createIndex, emptyFlags, observe, merge, judge, account, label,
+  };
 
   globalThis.Papieren ??= {};
   globalThis.Papieren.memory = memory;

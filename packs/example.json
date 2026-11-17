@@ -1,0 +1,39 @@
+{
+  "$schema": "./pack.schema.json",
+  "papierenPack": 1,
+  "id": "example",
+  "name": "Example: transfer gossip",
+  "kind": "topic",
+  "description": "A worked example using every kind of tell: football transfer rumours. Copy it as a starting point.",
+  "version": 1,
+  "threshold": 5,
+  "tells": [
+    { "w": 2, "on": "name", "phrase": "transfer news" },
+    { "w": 1, "on": "name", "pattern": "\\bfc\\b" },
+    { "w": 2, "on": "bio", "phrase": "transfer news" },
+    { "w": 1, "on": "bio", "pattern": "\\b(?:scoop|exclusive)s?\\b" },
+    { "w": 1, "on": "shape", "measure": "emoji", "min": 2 },
+    { "w": 1, "on": "shape", "measure": "hashtags", "min": 2 },
+    { "w": 1, "on": "shape", "measure": "caps", "min": 0.3, "max": 0.9 },
+    { "w": 1, "on": "shape", "measure": "lines", "min": 2 },
+    { "w": -1, "on": "shape", "measure": "length", "min": 600 },
+    { "w": 1, "on": "media", "has": "image" },
+    { "w": 2, "on": "media", "domain": "transfermarkt.com" },
+    { "w": -2, "on": "context", "is": "reply" },
+    { "w": -2, "on": "account", "is": "gold" },
+    { "w": 1, "on": "account", "is": "everywhere" },
+    { "w": 2, "on": "account", "is": "hidden-before" }
+  ],
+  "languages": {
+    "en": [
+      { "w": 3, "on": "text", "phrase": "done deal" },
+      { "w": 2, "on": "text", "phrase": "transfer window" },
+      { "w": 2, "on": "text", "phrase": "undergoes medical" },
+      { "w": 2, "on": "text", "pattern": "[£€$]\\d+m\\b" }
+    ],
+    "fr": [
+      { "w": 3, "on": "text", "phrase": "mercato" },
+      { "w": 2, "on": "text", "phrase": "visite médicale" }
+    ]
+  }
+}

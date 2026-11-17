@@ -18,7 +18,7 @@
     },
     {
       "matches": ["https://x.com/*"],
-      "js": ["src/lib/settings.js", "src/lib/rules.js", "src/lib/x-parse.js", "src/lib/variants.js", "src/lib/feed.js", "src/lib/memory.js", "src/content.js"],
+      "js": ["src/lib/settings.js", "src/lib/signals.js", "src/lib/packs.js", "src/signals/country.js", "src/signals/packs.js", "src/lib/rules.js", "src/lib/x-parse.js", "src/lib/variants.js", "src/lib/feed.js", "src/lib/memory.js", "src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_start"
     }

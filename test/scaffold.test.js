@@ -7,7 +7,10 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const libDir = path.join(root, 'src', 'lib');
-const libs = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'));
+// Libs others read at load go first, as in the manifest, popup and worker order.
+const FIRST = ['signals.js', 'memory.js'];
+const libs = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'))
+  .sort((a, b) => FIRST.includes(b) - FIRST.includes(a));
 
 test('require() returns the namespace the lib registered on globalThis.Papieren', () => {
   const rules = require('../src/lib/rules.js');
@@ -33,6 +36,13 @@ test('every file the manifest names exists', () => {
   for (const file of files) {
     assert.ok(fs.existsSync(path.join(root, file)), `missing ${file}`);
   }
+});
+
+test('every script the editor tab loads exists, the shared libs before packs.js', () => {
+  const html = fs.readFileSync(path.join(root, 'popup', 'packs.html'), 'utf8');
+  const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+  for (const src of srcs) assert.ok(fs.existsSync(path.join(root, 'popup', src)), `missing ${src}`);
+  assert.deepEqual(srcs, ['../src/lib/settings.js', '../src/lib/packs.js', 'packs.js']);
 });
 
 test('every script the popup loads exists, records.js after memory.js', () => {

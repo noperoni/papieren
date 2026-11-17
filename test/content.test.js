@@ -10,7 +10,10 @@ const { createHash } = require('node:crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
 const read = (f) => fs.readFileSync(path.join(SRC, f), 'utf8');
-const LIBS = ['lib/settings.js', 'lib/rules.js', 'lib/x-parse.js', 'lib/variants.js', 'lib/feed.js', 'lib/memory.js'].map(read);
+// The content-script libraries in manifest order, so a new one is never missed here.
+const MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+const LIBS = MANIFEST.content_scripts.find((c) => c.js.includes('src/content.js')).js
+  .filter((f) => f !== 'src/content.js').map((f) => read(f.replace(/^src\//, '')));
 const CONTENT = read('content.js');
 const ABOUT = fs.readFileSync(path.join(__dirname, 'fixtures', 'about-legacy.json'), 'utf8');
 // SHA-256 resolved in one microtask. node's crypto.subtle digests on the
@@ -165,7 +168,7 @@ test('block mode hides a listed country with its label; a click reveals it until
   await settle();
   assert.equal(cell.dataset.papieren, 'hidden');
   assert.equal(cell.dataset.papierenLabel, 'Hidden: @Ivan_Example · Russia · confirmed (click to show)');
-  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } }, byDetection: {} });
+  assert.deepEqual(await t.stats(), { layout: 'legacy', byCountry: { Russia: { n: 1, confirmed: 1, flagged: 0 } }, byRule: {} });
 
   t.click(cell);
   assert.equal(cell.dataset.papieren, 'revealed');
@@ -217,8 +220,9 @@ test('lookups: no permit, no request; the queue sleeps until the worker\'s retry
   t.inView(cell);
   await settle();
   assert.equal(t.toPage.filter((m) => m.kind === 'lookup').length, 0);
-  assert.equal(t.timers.length, 1);
-  assert.ok(t.timers[0] > 55_000 && t.timers[0] <= 60_000);
+  const wake = t.timers.filter((ms) => ms > 5_000); // the database's flush timer is 5 s at most
+  assert.equal(wake.length, 1);
+  assert.ok(wake[0] > 55_000 && wake[0] <= 60_000);
 });
 
 test('lookups: nothing is asked while switched off, nor before the hook is ready (Req 3.6)', async () => {
@@ -313,22 +317,11 @@ const hide = async (t) => {
 };
 const copyThread = (t, cells) => t.fromPage(payload(...cells.map((c, i) => reply(c.post.tweetId, user(`10${i}`, `a${i}`), SAME))));
 
-test('database off: a copy-paste thread stays visible and no db-* message is sent (Req 1.2)', async () => {
-  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: false, copy: true } } }, cells });
-  await settle();
-  copyThread(t, cells);
-  await settle();
-  await hide(t);
-  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
-  assert.deepEqual(t.sent.filter((m) => m.type.startsWith('db-')), []);
-});
-
 test('copy-paste: three Authors with one text hide with the count; the flush carries fingerprints, never text (Req 3.1, 3.6, 4, 6.1)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
   const ivan = fakeCell('14', 'Ivan_Example');
   const t = load({
-    local: { settings: { countries: ['Russia'], db: { on: true, copy: true, offender: true } }, 'c:ivan_example': RUSSIA },
+    local: { settings: { countries: ['Russia'], db: { copy: true, offender: true } }, 'c:ivan_example': RUSSIA },
     cells: [...cells, ivan],
   });
   await settle();
@@ -338,7 +331,7 @@ test('copy-paste: three Authors with one text hide with the count; the flush car
   assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
   assert.equal(cells[0].dataset.papierenLabel, 'Hidden: @a0 · copy-paste reply, 3 accounts (click to show)');
   assert.equal(ivan.dataset.papieren, 'hidden');
-  assert.deepEqual((await t.stats()).byDetection, { 'bm:copy': 3 });
+  assert.deepEqual((await t.stats()).byRule, { 'bm:copy': 3 });
   t.click(cells[0]);
 
   await hide(t);
@@ -359,23 +352,37 @@ test('copy-paste: three Authors with one text hide with the count; the flush car
   assert.deepEqual(f.stats, { country: { judged: 4, hid: 1 }, 'bm:copy': { judged: 4, hid: 3 }, 'bm:offender': { judged: 4, hid: 0 } });
 });
 
+test('sightings are recorded with every detection off; the toggles decide hiding only', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ cells });
+  await settle();
+  t.fromPage(payload(...cells.map((c, i) => tweet(c.post.tweetId, user(`10${i}`, `a${i}`),
+    { conversation_id_str: 'c1', in_reply_to_status_id_str: '1', full_text: SAME, extended_entities: { media: [{ id_str: 'p9' }] } }))));
+  await settle();
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  await hide(t);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  const kinds = (k) => f.memory.filter((m) => m.kind === k).map((m) => m.author).sort();
+  assert.deepEqual([kinds('copy'), kinds('conv'), kinds('media')], [['100', '101', '102'], ['100', '101', '102'], ['100', '101', '102']]);
+});
+
 test('worker flags hide at boot; neither a followed Author nor the viewer is hit (Req 3.4, 3.8)', async () => {
   const bad = fakeCell('21', 'bad');
   const friend = fakeCell('22', 'friend');
   const mine = fakeCell('23', 'me_myself');
-  const t = load({ local: { settings: { db: { on: true, offender: true } } }, cells: [bad, friend, mine] });
+  const t = load({ local: { settings: { db: { offender: true } } }, cells: [bad, friend, mine] });
   t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5, 201: 5, 42: 5 } } };
   await settle();
   t.fromPage(payload(tweet('21', user('200', 'bad')), tweet('22', user('201', 'friend', { legacy: { following: true } })), tweet('23', user('42', 'me_myself'))));
   await settle();
-  assert.equal(bad.dataset.papierenLabel, 'Hidden: @bad · repeat offender, hidden 5 times (click to show)');
+  assert.equal(bad.dataset.papierenLabel, 'Hidden: @bad · repeat offender, 5 detections (click to show)');
   assert.equal(friend.dataset.papieren, undefined);
   assert.equal(mine.dataset.papieren, undefined);
 });
 
 test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', async () => {
   const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
-  const t = load({ local: { settings: { db: { on: true, media: true } } }, cells });
+  const t = load({ local: { settings: { db: { media: true } } }, cells });
   await settle();
   t.fromPage(payload(...cells.map((c, i) => tweet(c.post.tweetId, user(`30${i}`, `m${i}`), { extended_entities: { media: [{ id_str: 'p9' }] } }))));
   await settle();
@@ -386,7 +393,7 @@ test('recycled media: the earliest post stays, the later ones hide (Req 3.3)', a
 test('dbEpoch: the worker deleted rows, so the tab drops its sightings and flags and asks again', async () => {
   const cells = ['31', '32', '33'].map((id, i) => fakeCell(id, `m${i}`));
   const bad = fakeCell('21', 'bad');
-  const t = load({ local: { settings: { db: { on: true, media: true, offender: true } } }, cells: [...cells, bad] });
+  const t = load({ local: { settings: { db: { media: true, offender: true } } }, cells: [...cells, bad] });
   t.replies['db-flags'] = { flags: { copy: {}, everywhere: {}, media: {}, offender: { 200: 5 } } };
   await settle();
   t.fromPage(payload(tweet('21', user('200', 'bad')),
@@ -401,9 +408,9 @@ test('dbEpoch: the worker deleted rows, so the tab drops its sightings and flags
   assert.ok([...cells, bad].every((c) => c.dataset.papieren !== 'hidden'));
 });
 
-test('an { error } answer runs the tab as switched off; a settings change asks again (Req 7.2)', async () => {
+test('an { error } answer runs the tab without the database; a settings change asks again (Req 7.2)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  const t = load({ local: { settings: { db: { copy: true } } }, cells });
   t.replies['db-flush'] = { error: 'UnknownError' };
   await settle();
   copyThread(t, cells);
@@ -415,15 +422,15 @@ test('an { error } answer runs the tab as switched off; a settings change asks a
   await settle();
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 
-  await t.area.set({ settings: { db: { on: true, copy: true, everywhere: true } } });
+  await t.area.set({ settings: { db: { copy: true, everywhere: true } } });
   await settle();
   assert.equal(t.sent.filter((m) => m.type === 'db-flags').length, 2);
   assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
 });
 
-test('flush: at most one per 5 s, none while hidden; switching off drops what waits (Req 7.3, 1.2)', async () => {
+test('flush: at most one per 5 s, none while hidden (Req 7.3)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
-  const t = load({ local: { settings: { db: { on: true, copy: true } } }, cells });
+  const t = load({ local: { settings: { db: { copy: true } } }, cells });
   await settle();
   copyThread(t, cells);
   await settle();
@@ -435,11 +442,101 @@ test('flush: at most one per 5 s, none while hidden; switching off drops what wa
   assert.ok(t.timers.at(-1) > 4000 && t.timers.at(-1) <= 5000);
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 
-  await t.area.set({ settings: { db: { on: false, copy: true } } });
+  await hide(t); // one last flush, then no timer until the tab is visible again
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 2);
+  const timers = t.timers.length;
+  t.click(cells[1]);
+  assert.equal(t.timers.length, timers);
+});
+
+// --- Packs (packs design, task 5.2) ---
+
+const BAIT = {
+  papierenPack: 1, id: 'bait', name: 'Bait', kind: 'junk', description: 'Asks for likes.', version: 1, threshold: 3,
+  tells: [], languages: { en: [{ w: 3, on: 'text', phrase: 'like if you agree' }] },
+};
+
+test('packs: read at boot, a bait post hides with the Pack\'s name; switching it off or editing it re-judges live (Req 2.1, 7.1)', async () => {
+  const cell = fakeCell('21', 'amy');
+  const plain = fakeCell('22', 'amy');
+  const broken = { ...BAIT, id: 'broken', threshold: 0 };
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['bait', 'broken'] } }, 'packs:builtin': [BAIT, broken] }, cells: [cell, plain] });
+  await settle();
+  t.fromPage(payload(tweet('21', user('7', 'amy'), { full_text: 'Like if you agree!', lang: 'en' }), tweet('22', user('7', 'amy'), { full_text: 'Nice day', lang: 'en' })));
+  await settle();
+  assert.equal(cell.dataset.papieren, 'hidden');
+  assert.equal(cell.dataset.papierenLabel, 'Hidden: @amy · Bait (click to show)');
+  assert.equal(plain.dataset.papieren, undefined);
+  assert.deepEqual((await t.stats()).byRule, { 'pack:bait': 1 });
+
+  await t.area.set({ 'packs:builtin': [{ ...BAIT, threshold: 4 }, broken] });
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+
+  await t.area.set({ 'packs:builtin': [BAIT, broken] });
+  await settle();
+  assert.equal(cell.dataset.papieren, 'hidden');
+  await t.area.set({ settings: { packs: { mode: 'block', on: [] } } });
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+});
+
+test('packs: All_But hides what no Pack matches; a post X sent no payload for stays (Req 2.2, 2.6)', async () => {
+  const bait = fakeCell('31', 'amy');
+  const plain = fakeCell('32', 'amy');
+  const domOnly = fakeCell('33', 'bob');
+  const t = load({ local: { settings: { packs: { mode: 'allbut', on: ['bait'] } }, 'packs:user': [BAIT] }, cells: [bait, plain, domOnly] });
+  await settle();
+  t.fromPage(payload(tweet('31', user('7', 'amy'), { full_text: 'like if you agree', lang: 'en' }), tweet('32', user('7', 'amy'), { full_text: 'Nice day', lang: 'en' })));
+  await settle();
+  assert.equal(bait.dataset.papieren, undefined);
+  assert.equal(plain.dataset.papierenLabel, 'Hidden: @amy · outside your packs (click to show)');
+  assert.equal(domOnly.dataset.papieren, undefined);
+});
+
+// --- Account Tells (packs design, account Tells) ---
+
+const RAGE = {
+  papierenPack: 1, id: 'rage', name: 'Rage', kind: 'junk', description: 'Insults.', version: 1, threshold: 3,
+  tells: [{ w: 2, on: 'account', is: 'everywhere' }, { w: 2, on: 'account', is: 'hidden-before' }],
+  languages: { en: [{ w: 1, on: 'text', phrase: 'clown' }, { w: 3, on: 'text', phrase: 'cope harder' }] },
+};
+
+test('account Tells: a worker Reply_Everywhere flag tips an insult over a Pack\'s Threshold, every toggle off', async () => {
+  const insult = fakeCell('41', 'troll');
+  const same = fakeCell('42', 'calm');
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['rage'] } }, 'packs:builtin': [RAGE] }, cells: [insult, same] });
+  t.replies['db-flags'] = { flags: { copy: {}, everywhere: { 400: 5 }, media: {}, offender: {}, packs: {} } };
+  await settle();
+  t.fromPage(payload(tweet('41', user('400', 'troll'), { full_text: 'clown', lang: 'en' }), tweet('42', user('401', 'calm'), { full_text: 'clown', lang: 'en' })));
+  await settle();
+  assert.equal(insult.dataset.papierenLabel, 'Hidden: @troll · Rage (click to show)');
+  assert.equal(same.dataset.papieren, undefined);
+});
+
+test('account Tells: a Pack hide is flushed as a pack row and weighs on the Author\'s newer Posts only', async () => {
+  const first = fakeCell('51', 'amy');
+  const later = fakeCell('52', 'amy');
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['rage'] } }, 'packs:builtin': [RAGE] }, cells: [first, later] });
+  await settle();
+  t.fromPage(payload(tweet('51', user('7', 'amy'), { full_text: 'Cope harder', lang: 'en' }), tweet('52', user('7', 'amy'), { full_text: 'clown', lang: 'en' })));
+  await settle();
+  assert.deepEqual([first.dataset.papieren, later.dataset.papieren], ['hidden', 'hidden']);
+  await hide(t);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  assert.deepEqual(f.memory.filter((m) => m.kind === 'pack').map((m) => [m.tweet, m.author, m.rule]).sort(),
+    [['51', '7', 'pack:rage'], ['52', '7', 'pack:rage']]);
+});
+
+test('offences: a detection is recorded with its toggle off, and nothing hides on it', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ cells });
+  await settle();
+  copyThread(t, cells);
   await settle();
   assert.ok(cells.every((c) => c.dataset.papieren === undefined));
   await hide(t);
-  t.runTimers();
-  await settle();
-  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  assert.deepEqual(f.memory.filter((m) => m.kind === 'offence').map((m) => m.rule), ['bm:copy', 'bm:copy', 'bm:copy']);
+  assert.deepEqual(f.history, []);
 });

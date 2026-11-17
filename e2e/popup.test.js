@@ -28,11 +28,9 @@ async function fresh(tc) {
   return b;
 }
 
-// Ticks "Keep a local database" and waits for the save to land.
-async function switchOn(b, page) {
-  await page.locator('#db-on').check();
-  await until(() => b.sw(() => t.peek('settings').then((s) => s?.db?.on === true)), 'db.on saved');
-}
+// The worker runs its handlers one after another, so a sweep asked for now
+// answers once the startup and popup-open sweeps queued before it are done.
+const swept = (p) => p.evaluate(() => chrome.runtime.sendMessage({ type: 'db-sweep' }));
 
 // Invented rows of every kind, a few of them shaped like spreadsheet formulas.
 async function seedAll(b) {
@@ -45,104 +43,44 @@ async function seedAll(b) {
   }, today());
 }
 
-test('D1.1 fresh install: switch off, controls greyed out, no database', async (tc) => {
+// The database is always there since 2026-11-17: no switch, and
+// nothing in the section waits for one (database Req 2.2, 3.5).
+test('fresh install: detections off, Retention 30 / 3 / 7 / 90, every control enabled', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  assert.equal(await p.locator('#db-on').isChecked(), false);
   const detections = p.locator('#db-detections input[type=checkbox]');
   assert.equal(await detections.count(), 4);
   for (const box of await detections.all()) {
     assert.equal(await box.isChecked(), false);
-    assert.equal(await box.isDisabled(), true);
+    assert.equal(await box.isDisabled(), false);
   }
   for (const [kind, days] of Object.entries(KEEP)) {
     const field = p.locator(`#db-keep input[data-kind=${kind}]`);
     assert.equal(await field.inputValue(), String(days));
-    assert.equal(await field.isDisabled(), true);
+    assert.equal(await field.isDisabled(), false);
   }
-  assert.equal(await p.locator('#db-export').isDisabled(), true);
-  assert.equal(await p.locator('#db-csv').isDisabled(), true);
-  assert.equal(await b.sw(() => t.dbExists()), false);
+  assert.equal(await p.locator('#db-export').isDisabled(), false);
+  assert.equal(await p.locator('#db-csv').isDisabled(), false);
 });
 
-test('D1.3 switching on sweeps the cache past its Retention, and only that', async (tc) => {
+test('D1.3 opening the popup sweeps the cache past its Retention, and only that', async (tc) => {
   const b = await fresh(tc);
+  // The install runs a sweep of its own; seeded under it, c:z went before
+  // `before` was read and the row failed about one run in three.
+  await swept(await b.popup());
   await b.sw(async () => {
     await t.seed('Z', 'France', { t: t.ago(31) });
     await t.seed('Y', 'Spain');
   });
   const before = await b.sw(() => t.cacheCount());
-  const p = await b.popup();
-  await switchOn(b, p);
-  await p.close();
   await b.popup();
   await until(() => b.sw(() => t.peek('c:z').then((v) => v === undefined)), 'c:z swept');
   assert.equal(await b.sw(() => t.cacheCount()), before - 1);
 });
 
-test('D1.4 switching off asks first, exports, then deletes the database and keeps the cache', async (tc) => {
-  const b = await fresh(tc);
-  const p = await b.popup();
-  await switchOn(b, p);
-  await seedAll(b);
-  const cache = await b.sw(() => t.cacheCount());
-
-  await p.locator('#db-on').click();
-  assert.equal(await p.locator('#db-on').isChecked(), true, 'box stays ticked while the panel is open');
-  assert.equal(await p.locator('#db-off').isVisible(), true);
-  await p.locator('#db-off-cancel').click();
-  assert.equal(await p.locator('#db-off').isVisible(), false);
-  assert.equal(await p.locator('#db-on').isChecked(), true);
-  assert.equal(await b.sw(() => t.peek('settings').then((s) => s.db.on)), true, 'Cancel changes nothing');
-  assert.equal((await b.sw(() => t.rows('history'))).length, 1);
-
-  await p.locator('#db-on').click();
-  const file = await download(p, () => p.locator('#db-off-export').click());
-  assert.equal(file.name, `papieren-database-${today()}.json`);
-  assert.equal(JSON.parse(file.text).history.length, 1);
-  await p.locator('#db-off-confirm').click();
-  await until(() => b.sw(() => t.dbExists().then((x) => !x)), 'database deleted');
-  assert.equal(await b.sw(() => t.cacheCount()), cache);
-  assert.equal(await p.locator('#db-on').isChecked(), false);
-  assert.equal(await p.locator('#db-export').isDisabled(), true);
-  assert.equal(await p.locator('#db-keep input[data-kind=history]').isDisabled(), true);
-});
-
-test('D1.4 confirming while the export still runs waits for it, and nothing recreates the database', async (tc) => {
-  const b = await fresh(tc);
-  const p = await b.popup();
-  await switchOn(b, p);
-  await seedAll(b);
-  // A large cache makes the export's storage read slow, the window the drop raced into.
-  await b.sw(() => chrome.storage.local.set(Object.fromEntries(Array.from({ length: 20000 },
-    (_, i) => [`c:bulk${i}`, { c: 'France', a: true, k: 'unverified', t: Date.now() }]))));
-  await p.locator('#db-on').click();
-  const file = await download(p, async () => {
-    await p.locator('#db-off-export').click();
-    await p.locator('#db-off-confirm').click();
-  });
-  const data = JSON.parse(file.text);
-  assert.equal(data.memory.length, 1);
-  assert.equal(data.history.length, 1);
-  await until(() => b.sw(() => t.dbExists().then((x) => !x)), 'database deleted');
-  await new Promise((r) => setTimeout(r, 1000));
-  assert.equal(await b.sw(() => t.dbExists()), false, 'nothing recreated it');
-});
-
-test('D1.4 the switch going off deletes the database even if no db-off message follows', async (tc) => {
-  const b = await fresh(tc);
-  const p = await b.popup();
-  await switchOn(b, p);
-  await seedAll(b);
-  await p.close();
-  await b.sw(() => t.set({ db: { on: false } }));
-  await until(() => b.sw(() => t.dbExists().then((x) => !x)), 'database deleted');
-});
-
 test('D2.1 an invalid Retention reverts, a valid one saves', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  await switchOn(b, p);
   const field = p.locator('#db-keep input[data-kind=history]');
   for (const bad of ['400', '', '2.5']) {
     await field.fill(bad);
@@ -160,7 +98,6 @@ test('D2.1 an invalid Retention reverts, a valid one saves', async (tc) => {
 test('D2.3 opening the popup sweeps history past its Retention', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  await switchOn(b, p);
   const field = p.locator('#db-keep input[data-kind=history]');
   await field.fill('1');
   await field.press('Tab');
@@ -174,7 +111,6 @@ test('D2.3 opening the popup sweeps history past its Retention', async (tc) => {
 test('D2.4 Delete all asks twice and disarms on focus loss', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  await switchOn(b, p);
   await seedAll(b);
   const del = p.locator('#db-keep button[data-clear=history]');
   await del.click();
@@ -192,7 +128,6 @@ test('D2.4 Delete all asks twice and disarms on focus loss', async (tc) => {
 test('D5.1 Export JSON carries version, time, retention and all four kinds', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  await switchOn(b, p);
   await seedAll(b);
   const file = await download(p, () => p.locator('#db-export').click());
   const data = JSON.parse(file.text);
@@ -205,7 +140,6 @@ test('D5.1 Export JSON carries version, time, retention and all four kinds', asy
 test('D5.2 Export CSV: one column per header, no formulas, three trailing columns', async (tc) => {
   const b = await fresh(tc);
   const p = await b.popup();
-  await switchOn(b, p);
   await seedAll(b);
   for (const kind of ['cache', 'memory', 'history', 'stats']) {
     await p.locator('#db-kind').selectOption(kind);
@@ -230,9 +164,9 @@ test('D5.2 Export CSV: one column per header, no formulas, three trailing column
 for (const [fails, what] of [[1, 'sweeps once and the retry lands'], [2, 'fails twice and the gate keeps the error']]) {
   test(`D7.2 quota: a full database ${what}`, async (tc) => {
     const b = await fresh(tc);
-    const p = await b.popup(); // opening it sweeps, so the old rows go in after
-    await switchOn(b, p);
-    await b.sw(async (n) => {
+    const p = await b.popup();
+    await swept(p); // the startup and popup-open sweeps are done, so the old rows go in after
+      await b.sw(async (n) => {
       const pad = 'x'.repeat(200);
       const old = [];
       for (let i = 0; i < 50; i++) old.push({ day: '2026-01-01', tweet: String(1000 + i), handle: 'old' + i, page: 'home', rule: 'country', revealed: false, t: t.ago(30), pad });
@@ -283,7 +217,7 @@ test('6.4 settings file: dated export, import restores and says what came in', a
   assert.equal(file.name, `papieren-settings-${today()}.json`);
   assert.equal(await p.locator('#file-note').textContent(), `Exported ${file.name}.`);
   const saved = JSON.parse(file.text);
-  assert.deepEqual(Object.keys(saved), ['v', 'mode', 'countries', 'placeholder', 'paused', 'lookups', 'budget', 'db']);
+  assert.deepEqual(Object.keys(saved), ['v', 'mode', 'countries', 'placeholder', 'paused', 'lookups', 'budget', 'db', 'packs']);
 
   const put = (name, text) => p.locator('#import').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) });
   const mode = () => b.sw(() => t.peek('settings').then((s) => s.mode));
@@ -296,13 +230,37 @@ test('6.4 settings file: dated export, import restores and says what came in', a
   await until(async () => (await p.locator('#file-note').textContent()) === 'Not imported: mode must be "block" or "allow".', 'bad mode refused');
   assert.equal(await mode(), 'block', 'a refused file changes nothing');
 
-  await put('lookups.json', JSON.stringify({ ...saved, lookups: true, db: { ...saved.db, on: true } }));
-  const want = 'Imported: show only 1 country. Lookups and the database switch stay as they were.';
+  // An export from before the database became required carries the database switch: it imports, the key dropped.
+  await put('lookups.json', JSON.stringify({ ...saved, lookups: true, db: { ...saved.db, on: false } }));
+  const want = 'Imported: show only 1 country, 0 packs on. Lookups stay as they were.';
   await until(async () => (await p.locator('#file-note').textContent()) === want, 'import note');
   const after = await b.sw(() => t.peek('settings'));
   assert.equal(after.mode, 'allow', 'the file restored the mode');
   assert.deepEqual(after.countries, saved.countries);
   assert.equal(after.lookups, false, 'an import never switches lookups on');
-  assert.equal(after.db.on, false, 'nor the database');
+  assert.equal('on' in after.db, false, 'the old database switch is dropped');
   assert.ok(await p.locator('input[name="mode"][value="allow"]').isChecked(), 'the popup shows it');
+});
+
+test('packs section: a row per built-in, a tick and the mode saved, an import names Packs not here (packs Req 4.3)', async (tc) => {
+  const b = await fresh(tc);
+  await until(() => b.sw(() => t.peek('packs:builtin').then((l) => l?.length === 4)), 'built-ins copied');
+  const p = await b.popup();
+  assert.equal(await p.locator('#packs label').count(), 4);
+  assert.match(await p.locator('#pack-line-ragebait').textContent(), /^Junk · .+ · threshold 6 · \d+ tells$/);
+  assert.equal(await p.locator('#packs input:checked').count(), 0, 'installed with every Pack off (Req 4.2)');
+
+  await p.locator('#packs input[value="ragebait"]').check();
+  await p.locator('input[name="pack-mode"][value="allbut"]').check();
+  const packs = () => b.sw(() => t.peek('settings').then((s) => s?.packs));
+  await until(async () => JSON.stringify(await packs()) === '{"mode":"allbut","on":["ragebait"]}', 'packs saved');
+
+  const file = { v: 1, mode: 'block', countries: [], packs: { mode: 'block', on: ['ai-tone', 'mine'] } };
+  await p.locator('#import').setInputFiles({ name: 'p.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(file)) });
+  const want = 'Imported: hide 0 countries, 1 pack on. Not here, so left off: mine. Lookups stay as they were.';
+  await until(async () => (await p.locator('#file-note').textContent()) === want, 'import note');
+  assert.deepEqual(await packs(), { mode: 'block', on: ['ai-tone'] });
+  assert.ok(await p.locator('#packs input[value="ai-tone"]').isChecked(), 'the popup shows it');
+  assert.equal(await p.locator('#packs input[value="ragebait"]').isChecked(), false);
+  assert.ok(await p.locator('input[name="pack-mode"][value="block"]').isChecked());
 });

@@ -31,7 +31,6 @@ function installHelpers() {
     },
     put: (store, ...list) => db.tx([store], 'readwrite', (tx) => Promise.all(list.map((r) => db.put(tx, store, r)))),
     ago: (days) => Date.now() - days * 864e5,
-    dbExists: async () => (await indexedDB.databases()).some((d) => d.name === 'papieren'),
     // Merges into the saved settings, db one level deep, as the popup's save does.
     set: async (patch) => {
       const s = settings.normalize((await chrome.storage.local.get('settings')).settings);
@@ -57,8 +56,10 @@ async function plain(userDataDir) {
   const dir = userDataDir || mkdtempSync(join(tmpdir(), 'papieren-'));
   const portFile = join(dir, 'DevToolsActivePort');
   rmSync(portFile, { force: true }); // a stale one from a crashed run names a dead port
+  // --class is the Wayland app_id a window rule can park the window by,
+  // off the focused monitor and unfocused (the maintainer's hyprland.lua).
   const child = spawn(BROWSER, [`--user-data-dir=${dir}`, '--remote-debugging-port=0', '--password-store=basic',
-    '--no-first-run', '--no-default-browser-check', `--load-extension=${EXT}`, 'about:blank'], { stdio: 'ignore' });
+    '--no-first-run', '--no-default-browser-check', '--class=papieren-e2e', `--load-extension=${EXT}`, 'about:blank'], { stdio: 'ignore' });
   const exited = new Promise((r) => child.once('exit', r));
   const end = Date.now() + 15_000;
   let port;

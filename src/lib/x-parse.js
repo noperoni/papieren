@@ -1,6 +1,7 @@
 // Parsers for X's own JSON: the AboutAccountQuery answer and timeline payloads.
 // Pure: text in, plain data out. Shared-lib pattern, see rules.js.
 (() => {
+  const signals = globalThis.Papieren?.signals ?? require('./signals.js');
   const GONE_CODES = new Set([50, 63]); // 50 user not found, 63 suspended
   const BIO_MAX = 300;
 
@@ -14,6 +15,24 @@
 
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
   const screenName = (user) => str(user?.core?.screen_name) ?? str(user?.legacy?.screen_name);
+
+  // What each registered Signal keeps from an X user or tweet, by Signal id
+  // (packs design, x-parse.js). A hook that throws or returns nothing
+  // contributes nothing; undefined when no hook kept anything.
+  function hooked(obj, hook) {
+    let out;
+    for (const s of signals.all()) {
+      if (!s[hook]) continue;
+      let v;
+      try {
+        v = s[hook](obj);
+      } catch {
+        continue;
+      }
+      if (v !== undefined) (out ??= {})[s.id] = v;
+    }
+    return out;
+  }
 
   // "Europe App Store" -> "Europe". "Web", and any form not seen yet, gives
   // nothing, so an unrecognised source can only leave the mark "unverified",
@@ -69,19 +88,23 @@
     const handle = screenName(user);
     if (!handle || !str(user?.rest_id)) return undefined;
     const ref = { id: user.rest_id, handle };
-    const bio = str(user.legacy?.description);
+    // profile_bio is where X puts it; no captured user had legacy.description.
+    const bio = str(user.profile_bio?.description) ?? str(user.legacy?.description);
     if (bio) ref.bio = bio.slice(0, BIO_MAX);
     // X's own record that the viewer follows this user (database Req 3.8).
     // ponytail: both known places; keep the one a captured payload shows.
     // relationship_perspectives is where legacy X puts it (2026-11-15); legacy.following
     // was in no capture and stays for the rebuilt app's payloads until the burner trial says.
     if (user.relationship_perspectives?.following === true || user.legacy?.following === true) ref.followed = true;
+    const sig = hooked(user, 'fromUser');
+    if (sig) ref.sig = sig;
     return ref;
   }
 
   // What behaviour memory reads from a tweet (database design, x-parse):
   // conv only on a Reply, text only with it (fingerprinted, then dropped by
-  // content.js), and the media ids X attached. Undefined when there is none.
+  // content.js), and the media ids X attached; then sig, what the Signals
+  // keep (packs design). Undefined when there is none.
   function factsOf(tweet) {
     const legacy = tweet?.legacy ?? {};
     const facts = {};
@@ -94,6 +117,8 @@
     const list = legacy.extended_entities?.media ?? legacy.entities?.media;
     const media = Array.isArray(list) ? [...new Set(list.map((m) => str(m?.id_str)).filter(Boolean))] : [];
     if (media.length) facts.media = media;
+    const sig = hooked(tweet, 'fromTweet');
+    if (sig) facts.sig = sig;
     return Object.keys(facts).length ? facts : undefined;
   }
 

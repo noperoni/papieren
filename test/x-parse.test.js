@@ -159,3 +159,18 @@ test('walkTimeline: followed only when X says the viewer follows', () => {
   assert.equal(by({ relationship_perspectives: { following: false } }), undefined);
   assert.equal(by({}), undefined);
 });
+
+test('walkTimeline: Signal hooks fill sig by Signal id; a throwing hook contributes nothing', () => {
+  const signals = require('../src/lib/signals.js');
+  // Only the marked user and tweet answer, so the cases above stay as they were.
+  signals.register({ id: 'probe', rank: 1, active: () => false, judge: () => null,
+    fromUser: (u) => (u.core?.screen_name === 'hooked' ? { name: 'kept' } : undefined),
+    fromTweet: (t) => (t.legacy?.full_text === 'hooked' ? { text: 'kept' } : undefined) });
+  signals.register({ id: 'broken', rank: 2, active: () => false, judge: () => null,
+    fromUser: () => { throw new Error('boom'); }, fromTweet: () => { throw new Error('boom'); } });
+  const user = (handle) => ({ __typename: 'User', rest_id: '7', core: { screen_name: handle } });
+  const tweet = (id, handle, text) => ({ __typename: 'Tweet', rest_id: id, core: { user_results: { result: user(handle) } }, legacy: { full_text: text } });
+  const { tweets } = walkTimeline(JSON.stringify({ a: tweet('1', 'hooked', 'hooked'), b: tweet('2', 'plain', 'plain') }));
+  assert.deepEqual(tweets.get('1'), { author: { id: '7', handle: 'hooked', sig: { probe: { name: 'kept' } } }, facts: { sig: { probe: { text: 'kept' } } } });
+  assert.deepEqual(tweets.get('2'), { author: { id: '7', handle: 'plain' } });
+});

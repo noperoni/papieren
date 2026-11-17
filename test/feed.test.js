@@ -21,6 +21,9 @@ test('authorState: cached country, stale still decides, none is pending', () => 
   assert.deepEqual(feed.authorState({ id: '1', handle: 'ivan' }, { c: 'Russia', t: 0 }, none), { id: '1', handle: 'ivan', country: 'Russia' });
   assert.deepEqual(feed.authorState({ handle: 'ivan' }, { c: null, t: 0 }, none), { handle: 'ivan', country: null });
   assert.deepEqual(feed.authorState({ handle: 'ivan' }, undefined, none), { handle: 'ivan', country: 'pending' });
+  // What the Signals kept from the payload user rides along for the Pack Signal.
+  const sig = { packs: { bio: 'follow back' } };
+  assert.deepEqual(feed.authorState({ id: '1', handle: 'ivan', sig }, undefined, none), { id: '1', handle: 'ivan', country: 'pending', sig });
 });
 
 test('authorState: a DOM-only author is the viewer when the handle matches, case aside (Req 2.4)', () => {
@@ -36,11 +39,14 @@ test('entryOf: every Req 8.1 field from a lookup, and a gone account as no count
 });
 
 test('label: one line with handle, country and only a real confidence mark (Req 5.1, 8.4)', () => {
-  const v = { hide: true, why: 'match', handle: 'ivan', country: 'Russia' };
+  const v = { hide: true, why: 'match', rule: 'country', handle: 'ivan', label: 'Russia', country: 'Russia' };
   assert.equal(feed.label(v, { k: 'confirmed' }), 'Hidden: @ivan · Russia · confirmed (click to show)');
   assert.equal(feed.label(v, { k: 'flagged' }), 'Hidden: @ivan · Russia · flagged (click to show)');
   assert.equal(feed.label(v, { k: 'unverified' }), 'Hidden: @ivan · Russia (click to show)');
-  assert.equal(feed.label({ ...v, country: 'Unknown' }, { k: 'unverified', c: null }), 'Hidden: @ivan · Unknown (click to show)');
+  assert.equal(feed.label({ ...v, label: 'Unknown', country: 'Unknown' }, { k: 'unverified', c: null }), 'Hidden: @ivan · Unknown (click to show)');
+  // Any other rule names its label and never carries the country's mark (packs Req 7.1).
+  assert.equal(feed.label({ hide: true, why: 'match', rule: 'pack:bait', handle: 'ann', label: 'Engagement bait' }, { k: 'confirmed' }),
+    'Hidden: @ann · Engagement bait (click to show)');
   assert.equal(feed.label({ hide: true, why: 'checking', handle: 'olga', country: 'pending' }), "Checking @olga's country (click to show)");
 });
 
@@ -118,8 +124,8 @@ test('pageKind: home, status and search; undefined elsewhere (database Req 4.1)'
   assert.equal(feed.pageKind('/ivan'), undefined);
 });
 
-test('stats skips behaviour hides; byDetection counts them by rule (database Req 6.2)', () => {
+test('stats skips behaviour hides; byRule counts every rule but country (database Req 6.2, packs Req 7.4)', () => {
   const hidden = [{ rule: 'country', country: 'Russia', k: 'confirmed' }, { rule: 'bm:copy' }, { rule: 'bm:copy' }, { rule: 'bm:media' }];
   assert.deepEqual(feed.stats(hidden), { Russia: { n: 1, confirmed: 1, flagged: 0 } });
-  assert.deepEqual(feed.byDetection(hidden), { 'bm:copy': 2, 'bm:media': 1 });
+  assert.deepEqual(feed.byRule(hidden), { 'bm:copy': 2, 'bm:media': 1 });
 });

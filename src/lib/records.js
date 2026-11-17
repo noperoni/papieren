@@ -11,19 +11,27 @@
   const TARGET = 90 * MB;
   const KINDS = ['cache', 'memory', 'history', 'stats'];
 
-  // Stored memory kind -> the detection whose flag it feeds.
-  const DETECTION = { copy: 'copy', conv: 'everywhere', media: 'media', offence: 'offender' };
+  // Stored memory kind -> the detection whose flag it feeds; pack rows, the
+  // Pack hides, feed the account Tells' flag.
+  const DETECTION = { copy: 'copy', conv: 'everywhere', media: 'media', offence: 'offender', pack: 'packs' };
+  const BY_AUTHOR = new Set(['conv', 'offence', 'pack']);   // flagged per Author, counted by key
+  const EARLIEST = new Set(['offence', 'pack']);            // the earliest tweet per rule
 
   const { dayOf } = memory;
 
-  // The flag one key earns from its stored rows, or null under threshold.
-  // rows: copy and media rows of one [kind, key]; conv and offence rows of one author.
+  // The flag one key earns from its stored rows, or null under memory.FLAG_MIN.
+  // rows: copy and media rows of one [kind, key]; conv, offence and pack rows of one author.
   function flagFor(kind, rows, now) {
     const det = DETECTION[kind];
     const live = kind === 'conv' ? rows.filter((r) => now - r.t <= memory.EVERYWHERE_MS) : rows;
-    const counted = kind === 'conv' || kind === 'offence' ? (r) => r.key : (r) => r.author;
+    const counted = BY_AUTHOR.has(kind) ? (r) => r.key : (r) => r.author;
     const n = new Set(live.map(counted)).size;
-    if (n < memory.THRESHOLDS[det]) return null;
+    if (n < memory.FLAG_MIN[det]) return null;
+    if (EARLIEST.has(kind)) {
+      const first = {};
+      for (const r of live) if (memory.earlier(r.key, first[r.rule])) first[r.rule] = r.key;
+      return { n, first };
+    }
     if (kind !== 'media') return { n };
     let first;
     for (const r of live) if (memory.earlier(r.tweet, first)) first = r.tweet;
@@ -44,10 +52,13 @@
   // --- db-flush intake: the message comes from a tab, so every row is checked ---
 
   const FLUSH_MAX = 2000;          // rows per list, the tab's buffer cap (Req 7.4)
-  const KEY_OF = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet' };
+  const KEY_OF = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet', pack: 'tweet' };
   const PAGES = ['home', 'status', 'search'];
-  const NOT_OFFENCES = ['country', 'bm:offender'];
   const matches = (re) => (v) => typeof v === 'string' && re.test(v);
+  // An offence is a behaviour detection, never Repeat_Offender's own; a
+  // Pack hide is a pack row, which no Repeat_Offender counts (Glossary).
+  const isOffence = (rule) => typeof rule === 'string' && rule.startsWith('bm:') && rule !== 'bm:offender';
+  const isPackRule = matches(/^pack:[a-z0-9][a-z0-9-]{0,39}$/);
   const isId = matches(/^\w{1,64}$/);         // ids, fingerprints
   const isHandle = matches(/^\w{1,50}$/);
   const isRule = matches(/^[\w:.-]{1,64}$/);  // country, bm:<detection>, later pack:<id>
@@ -60,13 +71,12 @@
     const field = Object.hasOwn(KEY_OF, m?.kind) ? KEY_OF[m.kind] : null;
     if (!field || !isId(m[field]) || !isId(m.author) || !isHandle(m.handle) || !Number.isFinite(m.t)) return null;
     const row = { kind: m.kind, key: m[field], author: m.author, handle: m.handle };
-    if (m.kind === 'media' || m.kind === 'offence') {
+    if (m.kind !== 'copy' && m.kind !== 'conv') {
       if (!isId(m.tweet)) return null;
       row.tweet = m.tweet;
     }
-    if (m.kind === 'offence') {
-      // A Repeat_Offender counts neither country hides nor its own (Glossary).
-      if (!isRule(m.rule) || NOT_OFFENCES.includes(m.rule)) return null;
+    if (EARLIEST.has(m.kind)) {
+      if (!isRule(m.rule) || !(m.kind === 'offence' ? isOffence(m.rule) : isPackRule(m.rule))) return null;
       row.rule = m.rule;
     }
     row.t = m.t;
@@ -107,8 +117,8 @@
     return { day, memory: [...mem.values()], history: [...history.values()], revealed: [...new Set(list(msg?.revealed).filter(isId))], stats };
   }
 
-  // Flags are keyed by the key for copy and media, by the author for conv and offence.
-  const flagKey = (r) => (r.kind === 'conv' || r.kind === 'offence' ? r.author : r.key);
+  // Flags are keyed by the key for copy and media, by the author for conv, offence and pack.
+  const flagKey = (r) => (BY_AUTHOR.has(r.kind) ? r.author : r.key);
 
   // The distinct [kind, flag key] pairs a batch of memory rows touches.
   function flagKeys(rows) {
@@ -118,9 +128,9 @@
   }
 
   // Where flagFor's rows live: the memory index and inclusive key bounds.
-  // conv reads the author's last 24 h; offence everything Retention left.
+  // conv reads the author's last 24 h; offence and pack everything Retention left.
   function flagRange(kind, key, now) {
-    if (kind === 'conv' || kind === 'offence') {
+    if (BY_AUTHOR.has(kind)) {
       return { index: 'author', lower: [kind, key, kind === 'conv' ? now - memory.EVERYWHERE_MS : -Infinity], upper: [kind, key, Infinity] };
     }
     return { index: 'key', lower: [kind, key], upper: [kind, key] };
@@ -132,7 +142,7 @@
     const out = memory.emptyFlags();
     for (const r of rows) {
       if (!Object.hasOwn(DETECTION, r?.kind)) continue;
-      out[DETECTION[r.kind]][r.key] = r.kind === 'media' && r.n ? { n: r.n, first: r.first } : r.n;
+      out[DETECTION[r.kind]][r.key] = (r.kind === 'media' || EARLIEST.has(r.kind)) && r.n ? { n: r.n, first: r.first } : r.n;
     }
     return out;
   }

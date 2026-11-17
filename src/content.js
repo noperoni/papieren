@@ -3,7 +3,7 @@
 // content.css, and runs this tab's lookup queue. Talks to the page hook in
 // JSON strings over DOM events, and to the worker for permits.
 (() => {
-  const { settings: Settings, rules, xParse, variants, feed, memory } = globalThis.Papieren;
+  const { settings: Settings, signals, rules, xParse, variants, feed, memory } = globalThis.Papieren;
   const TO_PAGE = 'papieren:to-page';
   const FROM_PAGE = 'papieren:from-page';
   const VARIANTS = new Set(['legacy', 'rebuilt']);
@@ -11,7 +11,9 @@
   const BUFFER_MAX = 2000;        // rows waiting for the worker, oldest dropped (Req 7.3, 7.4)
   const SEEN_MAX = 5000;          // tweet ids per once-per-day set
   const DETECTIONS = ['copy', 'everywhere', 'media', 'offender'];
-  const FIELD = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet' }; // a sighting's key in the flush
+  // Every detection that can be an offence, toggles aside; offender is none.
+  const RECORDED = Object.freeze({ copy: true, everywhere: true, media: true, offender: false });
+  const FIELD = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet', pack: 'tweet' }; // a sighting's key in the flush
 
   let settings = Settings.normalize();
   const cache = new Map();        // lowercased handle -> CacheEntry
@@ -31,20 +33,21 @@
     }
   };
 
-  // --- Database (database design, content.js): dormant while settings.db.on is false ---
+  // --- Database (database design, content.js): always live unless it failed ---
 
   let flags = memory.emptyFlags();   // the worker's counts, merged from every answer
   let index = memory.createIndex();  // this tab's own sightings
   let buffer = [];                   // [list, row] for the next db-flush, oldest first
   let counts = {};                   // rule -> { judged, hid } since the last flush
-  let dbFailed = false;              // an { error } answer: run as switched off (Req 7.2)
+  let dbFailed = false;              // an { error } answer: run without the database (Req 7.2)
   let flushTimer = 0;
   let lastFlush = 0;
   let today = '';
   const judgedToday = new Set();
   const hidToday = new Set();
+  const offendedToday = new Set();
 
-  const dbLive = () => settings.db.on && !dbFailed;
+  const dbLive = () => !dbFailed;
 
   const once = (set, id) => {
     if (set.has(id)) return false;
@@ -79,45 +82,54 @@
     push('memory', { ...row, [FIELD[s.kind]]: key });
   }
 
-  // What one payload tweet adds to behaviour memory, for the detections
-  // switched on. Neither the viewer nor a followed Author is observed (Req 3.8).
-  function sightings(v, id, db, now) {
+  // What one payload tweet adds to behaviour memory, whatever the detections'
+  // toggles: they decide hiding only, and account Tells read every sighting
+  //. Neither the viewer nor a followed Author is observed (Req 3.8).
+  function sightings(v, id, now) {
     const a = v.author;
     const f = v.facts;
     if (!f || !a?.id || a.followed || a.id === viewer.id) return [];
     const base = { author: a.id, handle: a.handle, t: now };
     const out = [];
     if (f.conv !== undefined) {
-      if (db.copy && f.fp) out.push({ kind: 'copy', key: f.fp, ...base });
-      if (db.everywhere) out.push({ kind: 'conv', key: f.conv, ...base });
+      if (f.fp) out.push({ kind: 'copy', key: f.fp, ...base });
+      out.push({ kind: 'conv', key: f.conv, ...base });
     }
-    if (db.media) for (const m of f.media ?? []) out.push({ kind: 'media', key: m, tweet: id, ...base });
+    for (const m of f.media ?? []) out.push({ kind: 'media', key: m, tweet: id, ...base });
     return out;
   }
 
+  // What each active Signal counts as judged: its own id unless it names its rules.
   const activeRules = () => [
-    ...(settings.mode === 'allow' || settings.countries.length > 0 ? ['country'] : []),
+    ...signals.all().filter((s) => s.active(settings)).flatMap((s) => s.rules?.(settings) ?? [s.id]),
     ...DETECTIONS.filter((d) => settings.db[d]).map((d) => `bm:${d}`),
   ];
 
   // Rule_Statistics and Hidden_History from one verdict: judged once per tweet
   // per day, hidden once per tweet per day by the rule that hid it (Req 4.1, 4.2).
-  function record(id, refs, verdict, hit, now) {
+  // seen: the behaviour detection that fires with every toggle on. It is an
+  // offence whether or not it hid the Post, and a Pack hide is a pack row:
+  // both feed the account Tells, and only offences a Repeat_Offender.
+  function record(id, refs, verdict, hit, seen, now) {
     const day = memory.dayOf(now);
     if (day !== today) {
       today = day;
       judgedToday.clear();
       hidToday.clear();
+      offendedToday.clear();
     }
     if (once(judgedToday, id)) for (const rule of activeRules()) bump(rule, 'judged');
-    const rule = verdict.why === 'match' ? 'country' : hit?.rule;
+    if (seen && once(offendedToday, id)) {
+      sight({ kind: 'offence', key: id, author: refs.author.id, handle: refs.author.handle, rule: seen.rule, t: now });
+    }
+    const rule = verdict.why === 'match' ? verdict.rule : hit?.rule;
     if (!rule || !once(hidToday, id)) return;
     bump(rule, 'hid');
-    const handle = rule === 'country' ? verdict.handle : hit.handle;
+    const handle = verdict.why === 'match' ? verdict.handle : hit.handle;
     push('history', { tweet: id, handle, page: feed.pageKind(location.pathname), rule, t: now });
-    // A Repeat_Offender counts neither country hides nor its own (Glossary).
-    if (rule !== 'country' && rule !== 'bm:offender' && settings.db.offender) {
-      sight({ kind: 'offence', key: id, author: refs.author.id, handle: refs.author.handle, rule, t: now });
+    const a = refs.author;
+    if (rule.startsWith('pack:') && a?.id && !a.followed && a.id !== viewer.id) {
+      sight({ kind: 'pack', key: id, author: a.id, handle: a.handle, rule, t: now });
     }
   }
 
@@ -146,9 +158,9 @@
   }
 
   // A worker answer: its flags merged and every cell judged again, or the
-  // database failed and the tab runs as switched off until settings change (Req 7.2).
+  // database failed and the tab runs without it until settings change (Req 7.2).
   function answer(r) {
-    if (!r || !settings.db.on) return;
+    if (!r) return;
     if (r.error) {
       dbFailed = true;
       buffer = [];
@@ -160,16 +172,6 @@
   }
 
   const loadFlags = () => message({ type: 'db-flags' }).then(answer);
-
-  // Switched off: the flags, the index and the buffer go.
-  function dbReset() {
-    flags = memory.emptyFlags();
-    index = memory.createIndex();
-    buffer = [];
-    counts = {};
-    clearTimeout(flushTimer);
-    flushTimer = 0;
-  }
 
   // --- Bridge to the page hook ---
 
@@ -186,8 +188,8 @@
   }
 
   // Payloads: tweet -> author map; the viewer's handle is learnt on the way,
-  // for posts the map has not seen (Req 2.4). With the database on, each
-  // tweet new to this tab is observed for the detections switched on.
+  // for posts the map has not seen (Req 2.4). Unless the database failed,
+  // each tweet new to this tab is observed, whatever the toggles.
   async function intake(body) {
     const { tweets: found } = xParse.walkTimeline(body);
     const own = new Map(); // record -> its own id: a repost pair is filed under both, the original's is the smaller
@@ -197,11 +199,11 @@
     }
     // A Reply's text is read only for copy-paste, and never kept: only its
     // Fingerprint reaches the identity map or the buffer (Req 3.6).
-    const db = dbLive() ? settings.db : null;
+    const live = dbLive();
     const texts = [];
     for (const v of own.keys()) {
       if (v.facts?.text === undefined) continue;
-      if (db?.copy) texts.push([v, v.facts.text]);
+      if (live) texts.push([v, v.facts.text]);
       delete v.facts.text;
     }
     if (texts.length) {
@@ -210,10 +212,13 @@
         if (fp) v.facts.fp = fp;
       }));
     }
-    if (db && dbLive()) {
+    if (live && dbLive()) {
       const now = Date.now();
-      for (const [v, id] of own) if (!tweets.has(id)) sightings(v, id, settings.db, now).forEach(sight);
+      for (const [v, id] of own) if (!tweets.has(id)) sightings(v, id, now).forEach(sight);
     }
+    // The Signals' intake work, off the mutation path (packs design: scoring at intake).
+    const records = [...own.keys()];
+    for (const s of signals.all()) s.prepare?.(records, { settings, viewerId: viewer.id });
     feed.remember(tweets, found);
     markAll();
   }
@@ -306,8 +311,16 @@
     // The payload's reposter wins: socialContext also carries "liked".
     const refs = tweets.get(post.tweetId)
       ?? { author: { handle: post.handle }, reposter: post.reposterHandle ? { handle: post.reposterHandle } : undefined };
+    const now = Date.now();
     const entryOf = (ref) => cache.get(ref.handle.toLowerCase());
-    const state = (ref) => ref && feed.authorState(ref, entryOf(ref), viewer);
+    // Each AuthorState carries its behaviour for the account Tells.
+    const state = (ref) => {
+      if (!ref) return undefined;
+      const s = feed.authorState(ref, entryOf(ref), viewer);
+      const acct = dbLive() ? memory.account(ref, flags, index, { now, viewerId: viewer.id, tweetId: post.tweetId }) : undefined;
+      return acct ? { ...s, acct } : s;
+    };
+    const states = new Map([refs.author, refs.reposter].filter(Boolean).map((r) => [r, state(r)]));
     const ctx = {
       settings,
       filteredPage: variants.isFilteredPage(location.pathname),
@@ -315,13 +328,11 @@
       viewerId: viewer.id,
       lookupsStopped: stopped || !settings.lookups,
     };
-    const verdict = rules.evaluate({ author: state(refs.author), reposter: state(refs.reposter) }, ctx);
+    const verdict = rules.evaluate({ author: states.get(refs.author), reposter: states.get(refs.reposter), facts: refs.facts }, ctx);
 
     // Spend lookups only where an answer can change what is shown.
-    const useful = ctx.filteredPage && !ctx.isFocal && !settings.paused
-      && (settings.mode === 'allow' || settings.countries.length > 0);
-    const now = Date.now();
-    const isViewer = (r) => viewer.id !== undefined && state(r).id === viewer.id;
+    const useful = ctx.filteredPage && !ctx.isFocal && !settings.paused && signals.get('country').active(settings);
+    const isViewer = (r) => viewer.id !== undefined && states.get(r).id === viewer.id;
     const need = useful ? [refs.author, refs.reposter].filter((r) => r && !isViewer(r) && !feed.fresh(entryOf(r), now)) : [];
     wanting.set(cell, need.map((r) => r.handle));
     io.observe(cell);
@@ -331,18 +342,19 @@
     // wins, a behaviour hit beats "checking" (database design, content.js).
     const live = dbLive() && ctx.filteredPage && !ctx.isFocal && !settings.paused && !(refs.author && isViewer(refs.author));
     const f = refs.facts ?? {};
-    const hit = live && verdict.why !== 'match'
-      ? memory.judge({ author: refs.author, reposter: refs.reposter, tweetId: post.tweetId, fp: f.fp, conv: f.conv, media: f.media },
-        flags, index, { on: settings.db, now, viewerId: viewer.id })
-      : null;
-    if (live) record(post.tweetId, refs, verdict, hit, now);
+    const bm = { author: refs.author, reposter: refs.reposter, tweetId: post.tweetId, fp: f.fp, conv: f.conv, media: f.media };
+    const judgeBm = (on) => memory.judge(bm, flags, index, { on, now, viewerId: viewer.id });
+    const hit = live && verdict.why !== 'match' ? judgeBm(settings.db) : null;
+    // The detection for the record, toggles aside: copy, everywhere and
+    // media only ever hit the Post's own Author.
+    if (live) record(post.tweetId, refs, verdict, hit, judgeBm(RECORDED), now);
 
     if (!verdict.hide && !hit) {
       hiddenHere.delete(post.tweetId);
       return clear(cell);
     }
-    const entry = verdict.hide ? cache.get(verdict.handle.toLowerCase()) : undefined;
-    if (verdict.why === 'match') hiddenHere.set(post.tweetId, { rule: 'country', country: verdict.country, k: entry?.k });
+    const entry = verdict.rule === 'country' ? cache.get(verdict.handle.toLowerCase()) : undefined;
+    if (verdict.why === 'match') hiddenHere.set(post.tweetId, entry ? { rule: 'country', country: verdict.country, k: entry.k } : { rule: verdict.rule });
     else if (hit) hiddenHere.set(post.tweetId, { rule: hit.rule });
     else hiddenHere.delete(post.tweetId);
     const mark = revealed.has(post.tweetId) ? 'revealed' : !hit && verdict.why === 'checking' ? 'checking' : 'hidden';
@@ -457,6 +469,8 @@
   // --- Settings and cache, live from every tab (Req 6.2, 1.3, 2.3) ---
 
   const placeholder = () => { document.documentElement.dataset.papierenPlaceholder = settings.placeholder; };
+  // storage.local keys a Signal reads (the Packs), -> that Signal.
+  const signalKeys = new Map(signals.all().flatMap((s) => (s.keys ?? []).map((k) => [k, s])));
 
   chrome.storage.local.onChanged.addListener((changes) => {
     let touched = false;
@@ -465,10 +479,13 @@
         const was = dbLive();
         settings = Settings.normalize(newValue);
         dbFailed = false; // the next answer says again (Req 7.2)
-        if (!settings.db.on) dbReset();
-        else if (!was) loadFlags();
+        if (!was) loadFlags(); // it had failed: ask the worker again
         stopped = false; // the next permit says again if the worker is still stopped
         placeholder();
+        touched = true;
+      } else if (signalKeys.has(key)) {
+        // A Pack edited or switched off re-judges the posts on screen, no reload.
+        signalKeys.get(key).stored(key, newValue);
         touched = true;
       } else if (key.startsWith('c:')) {
         if (newValue) cache.set(key.slice(2), newValue);
@@ -491,7 +508,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== 'stats') return false;
-    sendResponse({ layout: adapter?.id ?? null, byCountry: feed.stats(hiddenHere.values()), byDetection: feed.byDetection(hiddenHere.values()) });
+    sendResponse({ layout: adapter?.id ?? null, byCountry: feed.stats(hiddenHere.values()), byRule: feed.byRule(hiddenHere.values()) });
     return false;
   });
 
@@ -526,8 +543,9 @@
       else if (k.startsWith('qid:')) qids[k.slice(4)] ??= v;
     }
     settings = Settings.normalize(all.settings);
+    for (const [k, s] of signalKeys) s.stored(k, all[k]);
     placeholder();
-    if (settings.db.on) loadFlags();
+    loadFlags();
     if (document.readyState === 'loading') {
       await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }));
     }

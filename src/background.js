@@ -1,5 +1,5 @@
-// Service worker (ES module): owns the lookup budget, the toolbar badge and,
-// with the database switched on, its IndexedDB (database design).
+// Service worker (ES module): owns the lookup budget, the toolbar badge and
+// the database's IndexedDB (database design).
 // The libs register themselves on globalThis.Papieren as a side effect;
 // memory.js before records.js, which reads it.
 import './lib/budget.js';
@@ -7,8 +7,9 @@ import './lib/settings.js';
 import './lib/memory.js';
 import './lib/records.js';
 import './lib/db.js';
+import './lib/packs.js';
 
-const { budget, settings, records, db } = globalThis.Papieren;
+const { budget, settings, records, db, packs } = globalThis.Papieren;
 
 const STATE_KEY = 'budget';      // chrome.storage.session: cleared with the browser session (Req 7.1)
 const DB_ERROR = 'dbError';      // chrome.storage.session: why the database failed (database Req 7.2)
@@ -18,9 +19,10 @@ const CACHE_MAX = 50000;
 const QUOTA_KEEP = 0.8;          // a quota error drops the oldest 20%
 const RED = '#d93025';
 const AMBER = '#b06000';
-const OFF = { error: 'off' };
 const FLUSH_STORES = ['memory', 'history', 'stats', 'flags'];
 const CLEAR = { memory: ['memory', 'flags'], history: ['history'], stats: ['stats'] }; // flags derive from memory
+// One line per Built_in_Pack, each a file in papieren/packs/ (packs Req 4.1, 8.2).
+const BUILTIN = ['engagement-bait', 'ragebait', 'ai-tone', 'aggregator'];
 
 // Two tabs can ask at once and every op is read-modify-write on session
 // storage, so ops run one after another. A failed op does not block the next.
@@ -50,19 +52,17 @@ async function pruneCache(drop) {
   return keys.length;
 }
 
-// --- Database (database design): dormant while settings.db.on is false ---
+// --- Database (database design): always there, a failure aside (Req 7.2) ---
 
 const dbSettings = async () => settings.normalize((await chrome.storage.local.get('settings')).settings).db;
 
 // Short, for the popup's status line: a DOMException's name, else the message.
 const reasonOf = (e) => String((typeof DOMException === 'function' && e instanceof DOMException ? e.name : e?.message) ?? e).slice(0, 80);
 
-// The gate of every db-* handler but db-off. The switch is read first, so a
-// late flush writes nothing and IndexedDB never opens while off. A failure
-// this session answers again; a new one is kept in dbError (Req 7.2).
+// The gate of every IndexedDB db-* handler: a failure this session answers
+// again; a new one is kept in dbError (Req 7.2).
 async function withDb(fn) {
   const conf = await dbSettings();
-  if (!conf.on) return OFF;
   const known = (await chrome.storage.session.get(DB_ERROR))[DB_ERROR];
   if (known) return { error: known };
   try {
@@ -172,7 +172,7 @@ async function sweep(conf, now) {
     // After the deletions, so no flag outlives its rows.
     const old = await collect(t, 'flags');
     const next = await Promise.all(old.map((f) => recount(t, f.kind, f.key, now)));
-    changed = (await db.count(t, 'memory')) !== memoryRows || next.some((f, i) => f.n !== old[i].n || f.first !== old[i].first);
+    changed = (await db.count(t, 'memory')) !== memoryRows || next.some((f, i) => f.n !== old[i].n || JSON.stringify(f.first) !== JSON.stringify(old[i].first));
     await db.put(t, 'meta', now, 'lastSweep');
   });
   if (changed) await dropTabState(now);
@@ -184,11 +184,39 @@ async function sweepDue(now) {
 }
 
 // Counts keys first, so a cache under the cap is never loaded into the
-// worker. With the database on, a sweep.
+// worker. Then a sweep.
 async function startup() {
   const count = (await chrome.storage.local.getKeys()).filter((k) => k.startsWith(CACHE_PREFIX)).length;
   if (count > CACHE_MAX) await serial(() => pruneCache((e, i, n) => i < n - CACHE_MAX));
   await serial(() => withDb((conf) => sweep(conf, Date.now())));
+}
+
+// On install and every update: each Built_in_Pack read from the package
+// itself, never the network (packs Req 6.5, 8.1), validated and written to
+// packs:builtin. A file that fails is logged and left out; packs:user is
+// never touched, so every Pack_Copy survives a release (Req 4.4). The
+// settings keep only enabled ids that still exist.
+async function copyBuiltins() {
+  const out = [];
+  for (const id of BUILTIN) {
+    try {
+      const r = packs.validate(await (await fetch(chrome.runtime.getURL(`packs/${id}.json`))).text(), { builtin: true });
+      if (!r.ok) throw new Error(r.reason);
+      out.push(r.pack);
+    } catch (e) {
+      console.error(`Papieren: built-in pack "${id}" left out:`, e.message);
+    }
+  }
+  await chrome.storage.local.set({ 'packs:builtin': out });
+  const stored = await chrome.storage.local.get(['settings', 'packs:user']);
+  const on = stored.settings?.packs?.on;
+  if (!Array.isArray(on)) return;
+  const user = Array.isArray(stored['packs:user']) ? stored['packs:user'] : [];
+  const ids = new Set([...out, ...user].map((p) => p?.id));
+  const kept = on.filter((id) => ids.has(id));
+  if (kept.length < on.length) {
+    await chrome.storage.local.set({ settings: { ...stored.settings, packs: { ...stored.settings.packs, on: kept } } });
+  }
 }
 
 const handlers = {
@@ -243,7 +271,7 @@ const handlers = {
 
   // { kind } from the popup's "Delete all" (Req 2.4). The cache lives in storage.local.
   'db-clear': (msg) => serial(async () => {
-    if (msg.kind === 'cache') return (await dbSettings()).on ? { removed: await pruneCache(() => true) } : OFF;
+    if (msg.kind === 'cache') return { removed: await pruneCache(() => true) };
     if (!Object.hasOwn(CLEAR, msg.kind)) throw new Error('db-clear needs a kind');
     return withDb(async () => {
       await db.clear(CLEAR[msg.kind]);
@@ -257,14 +285,6 @@ const handlers = {
     await sweep(conf, Date.now());
     return {};
   })),
-
-  // After the popup's confirmation, db.on already false, so no switch check.
-  // Deletes the database; the c: cache stays (Req 1.5). The settings change
-  // has already queued the same drop (below): this one answers the popup.
-  'db-off': () => serial(async () => {
-    await db.drop();
-    return {};
-  }),
 };
 
 // Every listener is registered synchronously at top level, so an event that
@@ -282,9 +302,6 @@ chrome.storage.local.onChanged.addListener((changes) => {
   const c = changes.settings;
   if (!c) return;
   serial(() => chrome.storage.session.remove(DB_ERROR));
-  // On to off deletes the database here as well, so a popup closed before
-  // its db-off message still leaves none behind (database Req 1.5).
-  if (c.oldValue?.db?.on === true && c.newValue?.db?.on !== true) serial(() => db.drop());
   if ((c.oldValue?.paused === true) === (c.newValue?.paused === true)) return;
   serial(async () => {
     const state = await loadState();
@@ -295,4 +312,4 @@ chrome.storage.local.onChanged.addListener((changes) => {
 });
 
 chrome.runtime.onStartup.addListener(startup);
-chrome.runtime.onInstalled.addListener(startup);
+chrome.runtime.onInstalled.addListener(() => Promise.all([copyBuiltins(), startup()]));
