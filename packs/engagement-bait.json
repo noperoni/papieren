@@ -17,7 +17,9 @@
   ],
   "languages": {
     "en": [
-      { "w": 4, "on": "text", "pattern": "\\b(?:like|rt|retweet|repost|share)(?: this)? if you\\b" },
+      { "w": 4, "on": "text", "pattern": "\\b(?:rt|retweet|repost)(?: this)? if you\\b" },
+      { "w": 4, "on": "text", "pattern": "\\b(?:like|share) this if you\\b" },
+      { "w": 4, "on": "text", "pattern": "(?:^|[.!?\\n] *)(?:like|share) if you\\b" },
       { "w": 4, "on": "text", "pattern": "\\b(?:1|one|each|every) (?:like|rt|retweet|repost|follow|share) ?=" },
       { "w": 4, "on": "text", "pattern": "\\bfor every (?:like|rt|retweet|repost|follow|share)\\b" },
       { "w": 4, "on": "text", "phrase": "follow for more" },
@@ -30,7 +32,8 @@
       { "w": 4, "on": "text", "pattern": "\\b(?:smash|hit) (?:that|the) (?:like|follow|repost|retweet)\\b" },
       { "w": 4, "on": "text", "pattern": "\\b(?:make|help) (?:this|it) go viral\\b" },
       { "w": 4, "on": "text", "pattern": "\\bcan (?:i|we) get (?:this to )?\\d[\\d,.k]* (?:likes|retweets|rts|reposts|followers)\\b" },
-      { "w": 4, "on": "text", "pattern": "\\b(?:type|comment|say) (?:yes|amen)\\b" },
+      { "w": 4, "on": "text", "pattern": "\\b(?:type|comment) (?:yes|amen)\\b" },
+      { "w": 4, "on": "text", "phrase": "say amen" },
       { "w": 3, "on": "text", "pattern": "\\bonly \\d+% (?:of people )?(?:can|will|get|know)\\b" },
       { "w": 3, "on": "text", "pattern": "\\b(?:like|rt|retweet|repost|follow|share),? (?:and|&|\\+) (?:like|rt|retweet|repost|follow|share|subscribe|comment)\\b" },
       { "w": 3, "on": "text", "pattern": "\\b(?:retweet|repost|rt) (?:this|to|so)\\b" },
