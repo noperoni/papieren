@@ -11,7 +11,7 @@
   const OFFENCES = 2;             // the offences account Tell: 2 or more detections
   const MIN_TEXT = 20;            // characters, after normalize()
   const EVERYWHERE_MS = 24 * 60 * 60 * 1000;
-  const INDEX_MAX = 5000;         // keys per map (Req 7.4)
+  const INDEX_MAX = 5000;         // entries per map, inner ones included (Req 7.4)
   const FP_BYTES = 8;             // 16 hex characters
 
   // URLs first: a URL may hold an @. A mention needs a non-word character
@@ -47,31 +47,53 @@
   // X's ids grow with time: a shorter id is older, then by string order.
   const earlier = (a, b) => b === undefined || (a !== undefined && (a.length !== b.length ? a.length < b.length : a < b));
 
-  // The tab's own sightings, keyed as the worker's flags are. Every map keeps
-  // its newest INDEX_MAX keys.
-  const createIndex = () => ({ copy: new Map(), conv: new Map(), media: new Map(), offence: new Map(), pack: new Map() });
+  // The tab's own sightings, keyed as the worker's flags are. n counts each
+  // map's inner entries: an Author in a copy Set, a conversation, a tweet.
+  const createIndex = () => ({
+    copy: new Map(), conv: new Map(), media: new Map(), offence: new Map(), pack: new Map(),
+    n: { copy: 0, conv: 0, media: 0, offence: 0, pack: 0 },
+  });
   const emptyFlags = () => ({ copy: {}, everywhere: {}, media: {}, offender: {}, packs: {} });
 
-  function touch(map, key, make) {
+  const size = (v) => (v.authors ?? v).size; // a Set, a Map or a media entry
+
+  // Moves key to the newest end and lets add() change its entry, then drops
+  // the least recently touched keys until the map holds INDEX_MAX inner
+  // entries at most (Req 7.4): capping keys alone let an Author seen for
+  // days grow without bound. A key over the cap on its own goes too.
+  function put(index, kind, key, make, add) {
+    const map = index[kind];
     let v = map.get(key);
     if (v === undefined) v = make();
     else map.delete(key);
     map.set(key, v);
-    if (map.size > INDEX_MAX) map.delete(map.keys().next().value);
-    return v;
+    const before = size(v);
+    add(v);
+    index.n[kind] += size(v) - before;
+    for (const [k, old] of map) {
+      if (index.n[kind] <= INDEX_MAX) break;
+      index.n[kind] -= size(old);
+      map.delete(k);
+    }
   }
 
   // sighting: { kind: 'copy' | 'conv' | 'media' | 'offence' | 'pack', key, author, tweet?, rule?, t },
   // the same shape the flush sends. key: fingerprint, conversation id, media id or tweet id.
   // An offence is a behaviour detection, a pack row a Pack hide: both map tweet -> rule.
   function observe(index, s) {
-    if (s.kind === 'copy') touch(index.copy, s.key, () => new Set()).add(s.author);
-    else if (s.kind === 'conv') touch(index.conv, s.author, () => new Map()).set(s.key, s.t);
-    else if (s.kind === 'offence' || s.kind === 'pack') touch(index[s.kind], s.author, () => new Map()).set(s.key, s.rule);
-    else if (s.kind === 'media') {
-      const m = touch(index.media, s.key, () => ({ authors: new Set(), first: s.tweet }));
-      m.authors.add(s.author);
-      if (earlier(s.tweet, m.first)) m.first = s.tweet;
+    if (s.kind === 'copy') put(index, 'copy', s.key, () => new Set(), (v) => v.add(s.author));
+    else if (s.kind === 'conv') {
+      put(index, 'conv', s.author, () => new Map(), (v) => {
+        v.set(s.key, s.t);
+        for (const [c, t] of v) if (s.t - t > EVERYWHERE_MS) v.delete(c); // past 24 h: never counted again
+      });
+    } else if (s.kind === 'offence' || s.kind === 'pack') {
+      put(index, s.kind, s.author, () => new Map(), (v) => v.set(s.key, s.rule));
+    } else if (s.kind === 'media') {
+      put(index, 'media', s.key, () => ({ authors: new Set(), first: s.tweet }), (v) => {
+        v.authors.add(s.author);
+        if (earlier(s.tweet, v.first)) v.first = s.tweet;
+      });
     }
   }
 
@@ -177,7 +199,7 @@
   const label = (h) => `Hidden: @${h.handle} · ${WHY[h.rule](h.n)} (click to show)`;
 
   const memory = {
-    THRESHOLDS, FLAG_MIN, OFFENCES, MIN_TEXT, EVERYWHERE_MS,
+    THRESHOLDS, FLAG_MIN, OFFENCES, MIN_TEXT, EVERYWHERE_MS, INDEX_MAX,
     normalize, fingerprint, dayOf, earlier, createIndex, emptyFlags, observe, merge, judge, account, label,
   };
 

@@ -119,6 +119,12 @@ test('db import: a file without db keeps the current block whole', () => {
   assert.deepEqual(parseImport(file(), cur).settings.db, cur.db);
 });
 
+test('db import: a partial block keeps the current values it leaves out, never the defaults', () => {
+  const cur = normalize({ db: { copy: true, keep: { memory: 5, history: 30 } } });
+  const r = parseImport(file({ db: { media: true, keep: { stats: 120 } } }), cur);
+  assert.deepEqual(r.settings.db, { copy: true, everywhere: false, media: true, offender: false, keep: { cache: 30, memory: 5, history: 30, stats: 120 } });
+});
+
 test('db import: a malformed block rejects the whole file', () => {
   const bad = [
     { db: 'on' },
@@ -168,6 +174,14 @@ test('packs import: a file without packs keeps the current block and drops nothi
   const cur = normalize({ packs: { mode: 'allbut', on: ['ragebait'] } });
   const r = parseImport(file(), cur, []);
   assert.deepEqual(r.settings.packs, cur.packs);
+  assert.deepEqual(r.dropped, []);
+});
+
+test('packs import: a partial block keeps the current mode or list it leaves out', () => {
+  const cur = normalize({ packs: { mode: 'allbut', on: ['ragebait'] } });
+  assert.deepEqual(parseImport(file({ packs: { on: ['mine'] } }), cur, ['ragebait', 'mine']).settings.packs, { mode: 'allbut', on: ['mine'] });
+  const r = parseImport(file({ packs: { mode: 'block' } }), cur, ['ragebait']);
+  assert.deepEqual(r.settings.packs, { mode: 'block', on: ['ragebait'] });
   assert.deepEqual(r.dropped, []);
 });
 
