@@ -358,3 +358,12 @@ test('score answers one Score per enabled Pack', () => {
   const c = compile([pack(en(['agree'])), pack({ id: 'other', ...en(['agree', 5]) })]);
   assert.deepEqual([...score(c, { lang: 'en', text: 'agree' })], [['bait', 1], ['other', 5]]);
 });
+
+test('a Pattern that throws at match time is skipped and logged once (Error Handling)', (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const c = compile([pack({ threshold: 1, tells: [{ w: 1, on: 'name', pattern: 'x' }, { w: 2, on: 'name', phrase: 'amy' }] })]);
+  c[0].any.patterns[0].re = { source: 'x', test() { throw new RangeError('boom'); } };
+  assert.equal(score(c, { text: 'x' }, [{ name: 'amy x' }]).get('bait'), 2);
+  assert.equal(score(c, { text: 'x' }, [{ name: 'amy x' }]).get('bait'), 2);
+  assert.equal(warn.mock.callCount(), 1);
+});

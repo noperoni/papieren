@@ -217,7 +217,7 @@
     }
     // The Signals' intake work, off the mutation path (packs design: scoring at intake).
     const records = [...own.keys()];
-    for (const s of signals.all()) s.prepare?.(records, { settings });
+    for (const s of signals.all()) s.prepare?.(records, { settings, viewerId: viewer.id });
     feed.remember(tweets, found);
     markAll();
   }
@@ -460,6 +460,8 @@
   // --- Settings and cache, live from every tab (Req 6.2, 1.3, 2.3) ---
 
   const placeholder = () => { document.documentElement.dataset.papierenPlaceholder = settings.placeholder; };
+  // storage.local keys a Signal reads (the Packs), -> that Signal.
+  const signalKeys = new Map(signals.all().flatMap((s) => (s.keys ?? []).map((k) => [k, s])));
 
   chrome.storage.local.onChanged.addListener((changes) => {
     let touched = false;
@@ -472,6 +474,10 @@
         else if (!was) loadFlags();
         stopped = false; // the next permit says again if the worker is still stopped
         placeholder();
+        touched = true;
+      } else if (signalKeys.has(key)) {
+        // A Pack edited or switched off re-judges the posts on screen, no reload.
+        signalKeys.get(key).stored(key, newValue);
         touched = true;
       } else if (key.startsWith('c:')) {
         if (newValue) cache.set(key.slice(2), newValue);
@@ -529,6 +535,7 @@
       else if (k.startsWith('qid:')) qids[k.slice(4)] ??= v;
     }
     settings = Settings.normalize(all.settings);
+    for (const [k, s] of signalKeys) s.stored(k, all[k]);
     placeholder();
     if (settings.db.on) loadFlags();
     if (document.readyState === 'loading') {

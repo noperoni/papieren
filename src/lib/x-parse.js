@@ -88,7 +88,8 @@
     const handle = screenName(user);
     if (!handle || !str(user?.rest_id)) return undefined;
     const ref = { id: user.rest_id, handle };
-    const bio = str(user.legacy?.description);
+    // profile_bio is where X puts it; no captured user had legacy.description.
+    const bio = str(user.profile_bio?.description) ?? str(user.legacy?.description);
     if (bio) ref.bio = bio.slice(0, BIO_MAX);
     // X's own record that the viewer follows this user (database Req 3.8).
     // ponytail: both known places; keep the one a captured payload shows.

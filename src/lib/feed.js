@@ -13,10 +13,13 @@
   // AuthorState for rules.evaluate(). A stale entry still decides the post
   // while its refresh waits in the queue; only no entry at all is pending.
   // A DOM-only author has no id, so the viewer is also matched by handle.
+  // sig, what the Signals kept from the payload user, rides along: the Pack
+  // Signal scores name and bio from it (packs design).
   function authorState(ref, entry, viewer) {
     const isViewer = viewer.handle && ref.handle.toLowerCase() === viewer.handle.toLowerCase();
     const id = ref.id ?? (isViewer ? viewer.id : undefined);
     const state = { handle: ref.handle, country: entry ? entry.c : 'pending' };
+    if (ref.sig) state.sig = ref.sig;
     return id === undefined ? state : { id, ...state };
   }
 

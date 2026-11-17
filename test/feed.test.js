@@ -21,6 +21,9 @@ test('authorState: cached country, stale still decides, none is pending', () => 
   assert.deepEqual(feed.authorState({ id: '1', handle: 'ivan' }, { c: 'Russia', t: 0 }, none), { id: '1', handle: 'ivan', country: 'Russia' });
   assert.deepEqual(feed.authorState({ handle: 'ivan' }, { c: null, t: 0 }, none), { handle: 'ivan', country: null });
   assert.deepEqual(feed.authorState({ handle: 'ivan' }, undefined, none), { handle: 'ivan', country: 'pending' });
+  // What the Signals kept from the payload user rides along for the Pack Signal.
+  const sig = { packs: { bio: 'follow back' } };
+  assert.deepEqual(feed.authorState({ id: '1', handle: 'ivan', sig }, undefined, none), { id: '1', handle: 'ivan', country: 'pending', sig });
 });
 
 test('authorState: a DOM-only author is the viewer when the handle matches, case aside (Req 2.4)', () => {

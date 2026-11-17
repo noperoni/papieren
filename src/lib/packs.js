@@ -425,6 +425,22 @@
     }
   }
 
+  // A Pattern that throws at match time despite checkPattern is skipped,
+  // logged once per page (Error Handling).
+  const warned = new Set();
+  function patternMet(p, s) {
+    try {
+      return p.re.test(s);
+    } catch (e) {
+      p.dead = true;
+      if (!warned.has(p.re.source)) {
+        warned.add(p.re.source);
+        console.warn(`Papieren: Pattern /${p.re.source}/ skipped:`, e);
+      }
+      return false;
+    }
+  }
+
   function listScore(list, inputs, post) {
     let sum = 0;
     for (const g of list.phrases) {
@@ -433,7 +449,7 @@
       for (const i of [...met]) for (const j of g.implied[i]) met.add(j);
       for (const i of met) sum += g.w[i];
     }
-    for (const p of list.patterns) if (inputs[p.input].some((s) => typeof s === 'string' && p.re.test(s))) sum += p.w;
+    for (const p of list.patterns) if (!p.dead && inputs[p.input].some((s) => typeof s === 'string' && patternMet(p, s))) sum += p.w;
     for (const t of list.rest) if (otherMet(t, post)) sum += t.w;
     return sum;
   }

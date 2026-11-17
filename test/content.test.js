@@ -446,3 +446,48 @@ test('flush: at most one per 5 s, none while hidden; switching off drops what wa
   await settle();
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 });
+
+// --- Packs (packs design, task 5.2) ---
+
+const BAIT = {
+  papierenPack: 1, id: 'bait', name: 'Bait', kind: 'junk', description: 'Asks for likes.', version: 1, threshold: 3,
+  tells: [], languages: { en: [{ w: 3, on: 'text', phrase: 'like if you agree' }] },
+};
+
+test('packs: read at boot, a bait post hides with the Pack\'s name; switching it off or editing it re-judges live (Req 2.1, 7.1)', async () => {
+  const cell = fakeCell('21', 'amy');
+  const plain = fakeCell('22', 'amy');
+  const broken = { ...BAIT, id: 'broken', threshold: 0 };
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['bait', 'broken'] } }, 'packs:builtin': [BAIT, broken] }, cells: [cell, plain] });
+  await settle();
+  t.fromPage(payload(tweet('21', user('7', 'amy'), { full_text: 'Like if you agree!', lang: 'en' }), tweet('22', user('7', 'amy'), { full_text: 'Nice day', lang: 'en' })));
+  await settle();
+  assert.equal(cell.dataset.papieren, 'hidden');
+  assert.equal(cell.dataset.papierenLabel, 'Hidden: @amy · Bait (click to show)');
+  assert.equal(plain.dataset.papieren, undefined);
+  assert.deepEqual((await t.stats()).byRule, { 'pack:bait': 1 });
+
+  await t.area.set({ 'packs:builtin': [{ ...BAIT, threshold: 4 }, broken] });
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+
+  await t.area.set({ 'packs:builtin': [BAIT, broken] });
+  await settle();
+  assert.equal(cell.dataset.papieren, 'hidden');
+  await t.area.set({ settings: { packs: { mode: 'block', on: [] } } });
+  await settle();
+  assert.equal(cell.dataset.papieren, undefined);
+});
+
+test('packs: All_But hides what no Pack matches; a post X sent no payload for stays (Req 2.2, 2.6)', async () => {
+  const bait = fakeCell('31', 'amy');
+  const plain = fakeCell('32', 'amy');
+  const domOnly = fakeCell('33', 'bob');
+  const t = load({ local: { settings: { packs: { mode: 'allbut', on: ['bait'] } }, 'packs:user': [BAIT] }, cells: [bait, plain, domOnly] });
+  await settle();
+  t.fromPage(payload(tweet('31', user('7', 'amy'), { full_text: 'like if you agree', lang: 'en' }), tweet('32', user('7', 'amy'), { full_text: 'Nice day', lang: 'en' })));
+  await settle();
+  assert.equal(bait.dataset.papieren, undefined);
+  assert.equal(plain.dataset.papierenLabel, 'Hidden: @amy · outside your packs (click to show)');
+  assert.equal(domOnly.dataset.papieren, undefined);
+});

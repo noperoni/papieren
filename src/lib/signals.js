@@ -4,7 +4,10 @@
 // Shared-lib pattern, see rules.js.
 //
 // Signal: { id, rank, active(settings, ctx), judge(post, ctx),
-//           rules?(settings), fromUser?(user), fromTweet?(tweet), prepare?(records, ctx) }
+//           rules?(settings), fromUser?(user), fromTweet?(tweet), prepare?(records, ctx),
+//           keys?, stored?(key, value) }
+// keys: storage.local keys the Signal reads; content.js hands each to
+// stored() at boot and on every change.
 (() => {
   const list = [];
 

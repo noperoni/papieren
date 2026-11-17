@@ -138,3 +138,31 @@ test('the confidence mark never changes a verdict (Req 8.5)', () => {
     }
   }
 });
+
+// ---- Packs on the seam (packs design, rules.test.js) ----
+
+const packsSignal = require('../src/signals/packs.js');
+packsSignal.stored('packs:builtin', [{
+  papierenPack: 1, id: 'bait', name: 'Bait', kind: 'junk', description: 'Asks for likes.', version: 1, threshold: 3,
+  tells: [], languages: { en: [{ w: 3, on: 'text', phrase: 'like if you agree' }] },
+}]);
+const baitFacts = () => ({ sig: { packs: { text: 'like if you agree', lang: 'en', media: [], domains: [], reply: false, quote: false } } });
+const withPacks = (over = {}, settings = {}) => ctx(over, { packs: { mode: 'block', on: ['bait'] }, ...settings });
+
+test('packs: a Pack match beats a pending country and loses to a country match', () => {
+  assert.deepEqual(evaluate({ author: author('bob', 'pending', '1'), facts: baitFacts() }, withPacks({}, { mode: 'allow' })),
+    { hide: true, why: 'match', rule: 'pack:bait', handle: 'bob', label: 'Bait' });
+  assert.equal(evaluate({ author: author('ivan', 'Russia', '1'), facts: baitFacts() }, withPacks()).rule, 'country');
+  assert.deepEqual(evaluate({ author: author('bob', 'pending', '1'), facts: { sig: { packs: { text: 'hi', lang: 'en' } } } }, withPacks({}, { mode: 'allow' })),
+    { hide: true, why: 'checking', handle: 'bob', country: 'pending' });
+});
+
+test('packs: viewer, focal post, pause and an unfiltered page are never hidden on a Pack (Req 2.4, 2.5)', () => {
+  const p = (id) => ({ author: author('bob', 'France', id), facts: baitFacts() });
+  assert.equal(evaluate(p('1'), withPacks()).rule, 'pack:bait');
+  assert.deepEqual(evaluate(p('v1'), withPacks()), SHOW);
+  assert.deepEqual(evaluate(p('1'), withPacks({ isFocal: true })), SHOW);
+  assert.deepEqual(evaluate(p('1'), withPacks({ filteredPage: false })), SHOW);
+  assert.deepEqual(evaluate(p('1'), withPacks({}, { paused: true })), SHOW);
+  assert.deepEqual(evaluate(p('v1'), withPacks({}, { packs: { mode: 'allbut', on: ['bait'] } })), SHOW);
+});
