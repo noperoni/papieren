@@ -241,20 +241,26 @@
     return { ok: true, pack: { ...pack, tells, languages } };
   }
 
-  // The stored lists -> every valid Pack, built-ins first, then user Packs,
-  // each in stored order. A Pack that fails, or repeats an id, is left out
-  // (Error Handling); a user Pack may not take a built-in's id.
-  function merge(builtin, user) {
+  // The stored lists -> one entry per stored Pack, built-ins first, then
+  // user Packs, each in stored order: { builtin, index, pack } when valid,
+  // { builtin, index, raw, reason } when not. A repeated id fails, and a user
+  // Pack may not take a built-in's id (Error Handling).
+  function check(builtin, user) {
     const seen = new Set();
-    const clean = (list, opts) => (Array.isArray(list) ? list : []).flatMap((p) => {
-      const r = validate(p, opts);
-      if (!r.ok || seen.has(r.pack.id)) return [];
+    const entries = (list, opts) => (Array.isArray(list) ? list : []).map((raw, index) => {
+      const r = validate(raw, opts);
+      const reason = !r.ok ? r.reason : seen.has(r.pack.id) ? `id "${r.pack.id}" is used by another pack.` : null;
+      if (reason) return { builtin: !!opts.builtin, index, raw, reason };
       seen.add(r.pack.id);
-      return [r.pack];
+      return { builtin: !!opts.builtin, index, pack: r.pack };
     });
-    const b = clean(builtin, { builtin: true });
-    return [...b, ...clean(user, { builtinIds: b.map((p) => p.id) })];
+    const b = entries(builtin, { builtin: true });
+    return [...b, ...entries(user, { builtinIds: b.flatMap((e) => (e.pack ? [e.pack.id] : [])) })];
   }
+
+  // Every valid Pack, in check's order: what the content scripts filter with.
+  const merge = (builtin, user) => check(builtin, user).flatMap((e) => (e.pack ? [e.pack] : []));
+  const isLang = (code) => typeof code === 'string' && LANG.test(code);
 
   // Req 4.3: every Tell, language-independent and per language.
   const tellCount = (pack) => Object.values(pack.languages).reduce((n, l) => n + l.length, pack.tells.length);
@@ -526,7 +532,7 @@
 
   const packs = {
     KINDS, MEASURES, MEDIA, CONTEXTS, ACCOUNT, MAX_TELLS, MAX_FILE,
-    fold, checkPattern, validate, merge, tellCount, parseLines, toLines, visible, measure, compile, score, accountScore,
+    fold, checkPattern, validate, check, merge, isLang, tellCount, parseLines, toLines, visible, measure, compile, score, accountScore,
   };
 
   globalThis.Papieren ??= {};

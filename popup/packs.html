@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Papieren packs</title>
+  <link rel="stylesheet" href="packs.css">
+</head>
+<body>
+  <nav aria-labelledby="h-list">
+    <h1 id="h-list">Packs</h1>
+    <ul id="list"></ul>
+    <div class="row">
+      <button type="button" id="new">New pack</button>
+      <button type="button" id="import-btn">Import pack…</button>
+    </div>
+    <input type="file" id="import" accept="application/json,.json" hidden>
+  </nav>
+
+  <main aria-labelledby="h-pack">
+    <h2 id="h-pack"></h2>
+    <p id="about" class="muted"></p>
+    <form id="form" hidden>
+      <fieldset id="fields">
+        <label>Name <input type="text" id="name" maxlength="40" required></label>
+        <label>Kind
+          <select id="kind">
+            <option value="junk">Junk: a kind of post, like crypto spam</option>
+            <option value="topic">Topic: a subject, like sports</option>
+          </select>
+        </label>
+        <label>Description <input type="text" id="description" maxlength="120" required></label>
+        <label>Threshold: a post is matched when the weights of the tells it meets reach this
+          <input type="number" id="threshold" min="1" max="100" step="1" required></label>
+        <label>Any language <textarea id="any" rows="8" spellcheck="false"></textarea></label>
+        <div id="langs"></div>
+        <div class="row" id="add-row">
+          <label>Language code <input type="text" id="lang-code" placeholder="fr" autocomplete="off"></label>
+          <button type="button" id="add-lang">Add language</button>
+        </div>
+      </fieldset>
+    </form>
+    <div class="row">
+      <button type="button" id="save">Save</button>
+      <button type="button" id="copy">Edit a copy</button>
+      <button type="button" id="export">Export</button>
+      <button type="button" id="delete">Delete</button>
+    </div>
+    <p id="note" role="status"></p>
+
+    <details>
+      <summary>How a tell is written</summary>
+      <pre>3 like if you agree         # a phrase: language boxes only
+2 /^rt if\b/                # a pattern, between slashes: at most 200 characters
+1 name: crypto              # name: or bio:, a phrase or a /pattern/
+2 emoji >= 5                # emoji, hashtags: counts
+1 caps >= 0.6 &lt;= 0.9        # caps: the share of capital letters, 0 to 1
+1 lines >= 3                # lines: lines per sentence
+-1 length >= 600            # length: characters
+2 media: link               # image, video, gif, poll, link
+1 domain: example.com       # a link to the host or any subdomain
+-2 context: reply           # reply, quote, repost, original
+-3 account: gold            # gold, grey, affiliate, blue checkmarks;
+1 account: everywhere       # everywhere, offences, copy, recycled,
+2 account: hidden-before    # hidden-before: what the database saw</pre>
+      <p>The weight comes first: -10 to 10, not 0, and a negative weight counts against a match. A # starts a note at the start of a line, or after a space when a space or the line's end follows it, so #giveaway stays a phrase. Notes are not kept when you save.</p>
+    </details>
+  </main>
+
+  <script src="../src/lib/settings.js"></script>
+  <script src="../src/lib/packs.js"></script>
+  <script src="packs.js"></script>
+</body>
+</html>

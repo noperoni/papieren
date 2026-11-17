@@ -1,0 +1,32 @@
+/* No filters, blur, transitions or animations (Req 9.4). */
+:root { color-scheme: light dark; }
+
+body {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 48rem);
+  min-height: 100vh;
+  font: 14px/1.45 system-ui, sans-serif;
+}
+
+nav { padding: 12px; border-right: 1px solid rgba(113, 118, 123, 0.4); }
+main { padding: 12px 20px; }
+h1, h2 { font-size: 16px; margin: 0 0 6px; }
+
+ul { list-style: none; margin: 0 0 8px; padding: 0; }
+li { display: flex; align-items: baseline; gap: 6px; }
+li button { padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+li button[aria-current] { font-weight: 600; text-decoration: underline; }
+
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+label { display: block; margin: 8px 0; }
+input[type="text"], select, textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 2px; font: inherit; }
+input[type="number"] { display: block; width: 6em; margin-top: 2px; }
+textarea, pre { font-family: ui-monospace, monospace; font-size: 13px; font-variant-ligatures: none; }
+#lang-code { width: 7em; }
+
+.row { display: flex; align-items: end; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.row label { margin: 0; }
+.muted { opacity: 0.75; }
+#note { min-height: 1.4em; }
+pre { white-space: pre-wrap; font-size: 13px; }

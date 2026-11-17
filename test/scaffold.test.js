@@ -38,6 +38,13 @@ test('every file the manifest names exists', () => {
   }
 });
 
+test('every script the editor tab loads exists, the shared libs before packs.js', () => {
+  const html = fs.readFileSync(path.join(root, 'popup', 'packs.html'), 'utf8');
+  const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+  for (const src of srcs) assert.ok(fs.existsSync(path.join(root, 'popup', src)), `missing ${src}`);
+  assert.deepEqual(srcs, ['../src/lib/settings.js', '../src/lib/packs.js', 'packs.js']);
+});
+
 test('every script the popup loads exists, records.js after memory.js', () => {
   const html = fs.readFileSync(path.join(root, manifest.action.default_popup), 'utf8');
   const dir = path.dirname(path.join(root, manifest.action.default_popup));
