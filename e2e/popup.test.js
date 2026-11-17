@@ -65,6 +65,9 @@ test('fresh install: detections off, Retention 30 / 3 / 7 / 90, every control en
 
 test('D1.3 opening the popup sweeps the cache past its Retention, and only that', async (tc) => {
   const b = await fresh(tc);
+  // The install runs a sweep of its own; seeded under it, c:z went before
+  // `before` was read and the row failed about one run in three.
+  await swept(await b.popup());
   await b.sw(async () => {
     await t.seed('Z', 'France', { t: t.ago(31) });
     await t.seed('Y', 'Spain');
