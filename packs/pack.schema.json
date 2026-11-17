@@ -128,12 +128,24 @@
         "is": { "enum": ["reply", "quote", "repost", "original"] }
       }
     },
+    "accountTell": {
+      "description": "The Author's account, either Author of a repost. Checkmarks: gold (business), grey (government), affiliate, blue. Behaviour, from the database: everywhere (Reply_Everywhere), offences (2 or more behaviour detections), copy and recycled (an older Post detected as Copy_Paste_Text or Recycled_Media), hidden-before (an older Post hidden by this same Pack).",
+      "type": "object",
+      "required": ["w", "on", "is"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "$ref": "#/$defs/weight" },
+        "on": { "const": "account" },
+        "is": { "enum": ["gold", "grey", "affiliate", "blue", "everywhere", "offences", "copy", "recycled", "hidden-before"] }
+      }
+    },
     "tell": {
       "oneOf": [
         { "$ref": "#/$defs/authorTell" },
         { "$ref": "#/$defs/shapeTell" },
         { "$ref": "#/$defs/mediaTell" },
-        { "$ref": "#/$defs/contextTell" }
+        { "$ref": "#/$defs/contextTell" },
+        { "$ref": "#/$defs/accountTell" }
       ]
     }
   }

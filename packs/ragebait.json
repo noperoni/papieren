@@ -10,7 +10,10 @@
   "tells": [
     { "w": 1, "on": "bio", "pattern": "\\b(?:politically incorrect|not politically correct|easily offended)\\b" },
     { "w": 2, "on": "shape", "measure": "caps", "min": 0.6 },
-    { "w": 1, "on": "context", "is": "quote" }
+    { "w": 1, "on": "context", "is": "quote" },
+    { "w": 2, "on": "account", "is": "everywhere" },
+    { "w": 1, "on": "account", "is": "offences" },
+    { "w": 2, "on": "account", "is": "hidden-before" }
   ],
   "languages": {
     "en": [

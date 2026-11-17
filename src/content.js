@@ -11,7 +11,9 @@
   const BUFFER_MAX = 2000;        // rows waiting for the worker, oldest dropped (Req 7.3, 7.4)
   const SEEN_MAX = 5000;          // tweet ids per once-per-day set
   const DETECTIONS = ['copy', 'everywhere', 'media', 'offender'];
-  const FIELD = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet' }; // a sighting's key in the flush
+  // Every detection that can be an offence, toggles aside; offender is none.
+  const RECORDED = Object.freeze({ copy: true, everywhere: true, media: true, offender: false });
+  const FIELD = { copy: 'fp', conv: 'conv', media: 'media', offence: 'tweet', pack: 'tweet' }; // a sighting's key in the flush
 
   let settings = Settings.normalize();
   const cache = new Map();        // lowercased handle -> CacheEntry
@@ -43,6 +45,7 @@
   let today = '';
   const judgedToday = new Set();
   const hidToday = new Set();
+  const offendedToday = new Set();
 
   const dbLive = () => !dbFailed;
 
@@ -79,19 +82,20 @@
     push('memory', { ...row, [FIELD[s.kind]]: key });
   }
 
-  // What one payload tweet adds to behaviour memory, for the detections
-  // switched on. Neither the viewer nor a followed Author is observed (Req 3.8).
-  function sightings(v, id, db, now) {
+  // What one payload tweet adds to behaviour memory, whatever the detections'
+  // toggles: they decide hiding only, and account Tells read every sighting
+  //. Neither the viewer nor a followed Author is observed (Req 3.8).
+  function sightings(v, id, now) {
     const a = v.author;
     const f = v.facts;
     if (!f || !a?.id || a.followed || a.id === viewer.id) return [];
     const base = { author: a.id, handle: a.handle, t: now };
     const out = [];
     if (f.conv !== undefined) {
-      if (db.copy && f.fp) out.push({ kind: 'copy', key: f.fp, ...base });
-      if (db.everywhere) out.push({ kind: 'conv', key: f.conv, ...base });
+      if (f.fp) out.push({ kind: 'copy', key: f.fp, ...base });
+      out.push({ kind: 'conv', key: f.conv, ...base });
     }
-    if (db.media) for (const m of f.media ?? []) out.push({ kind: 'media', key: m, tweet: id, ...base });
+    for (const m of f.media ?? []) out.push({ kind: 'media', key: m, tweet: id, ...base });
     return out;
   }
 
@@ -103,22 +107,29 @@
 
   // Rule_Statistics and Hidden_History from one verdict: judged once per tweet
   // per day, hidden once per tweet per day by the rule that hid it (Req 4.1, 4.2).
-  function record(id, refs, verdict, hit, now) {
+  // seen: the behaviour detection that fires with every toggle on. It is an
+  // offence whether or not it hid the Post, and a Pack hide is a pack row:
+  // both feed the account Tells, and only offences a Repeat_Offender.
+  function record(id, refs, verdict, hit, seen, now) {
     const day = memory.dayOf(now);
     if (day !== today) {
       today = day;
       judgedToday.clear();
       hidToday.clear();
+      offendedToday.clear();
     }
     if (once(judgedToday, id)) for (const rule of activeRules()) bump(rule, 'judged');
+    if (seen && once(offendedToday, id)) {
+      sight({ kind: 'offence', key: id, author: refs.author.id, handle: refs.author.handle, rule: seen.rule, t: now });
+    }
     const rule = verdict.why === 'match' ? verdict.rule : hit?.rule;
     if (!rule || !once(hidToday, id)) return;
     bump(rule, 'hid');
     const handle = verdict.why === 'match' ? verdict.handle : hit.handle;
     push('history', { tweet: id, handle, page: feed.pageKind(location.pathname), rule, t: now });
-    // A Repeat_Offender counts behaviour hides only, never its own (Glossary; packs design).
-    if (rule.startsWith('bm:') && rule !== 'bm:offender' && settings.db.offender) {
-      sight({ kind: 'offence', key: id, author: refs.author.id, handle: refs.author.handle, rule, t: now });
+    const a = refs.author;
+    if (rule.startsWith('pack:') && a?.id && !a.followed && a.id !== viewer.id) {
+      sight({ kind: 'pack', key: id, author: a.id, handle: a.handle, rule, t: now });
     }
   }
 
@@ -178,7 +189,7 @@
 
   // Payloads: tweet -> author map; the viewer's handle is learnt on the way,
   // for posts the map has not seen (Req 2.4). Unless the database failed,
-  // each tweet new to this tab is observed for the detections switched on.
+  // each tweet new to this tab is observed, whatever the toggles.
   async function intake(body) {
     const { tweets: found } = xParse.walkTimeline(body);
     const own = new Map(); // record -> its own id: a repost pair is filed under both, the original's is the smaller
@@ -188,11 +199,11 @@
     }
     // A Reply's text is read only for copy-paste, and never kept: only its
     // Fingerprint reaches the identity map or the buffer (Req 3.6).
-    const db = dbLive() ? settings.db : null;
+    const live = dbLive();
     const texts = [];
     for (const v of own.keys()) {
       if (v.facts?.text === undefined) continue;
-      if (db?.copy) texts.push([v, v.facts.text]);
+      if (live) texts.push([v, v.facts.text]);
       delete v.facts.text;
     }
     if (texts.length) {
@@ -201,9 +212,9 @@
         if (fp) v.facts.fp = fp;
       }));
     }
-    if (db && dbLive()) {
+    if (live && dbLive()) {
       const now = Date.now();
-      for (const [v, id] of own) if (!tweets.has(id)) sightings(v, id, settings.db, now).forEach(sight);
+      for (const [v, id] of own) if (!tweets.has(id)) sightings(v, id, now).forEach(sight);
     }
     // The Signals' intake work, off the mutation path (packs design: scoring at intake).
     const records = [...own.keys()];
@@ -300,8 +311,16 @@
     // The payload's reposter wins: socialContext also carries "liked".
     const refs = tweets.get(post.tweetId)
       ?? { author: { handle: post.handle }, reposter: post.reposterHandle ? { handle: post.reposterHandle } : undefined };
+    const now = Date.now();
     const entryOf = (ref) => cache.get(ref.handle.toLowerCase());
-    const state = (ref) => ref && feed.authorState(ref, entryOf(ref), viewer);
+    // Each AuthorState carries its behaviour for the account Tells.
+    const state = (ref) => {
+      if (!ref) return undefined;
+      const s = feed.authorState(ref, entryOf(ref), viewer);
+      const acct = dbLive() ? memory.account(ref, flags, index, { now, viewerId: viewer.id, tweetId: post.tweetId }) : undefined;
+      return acct ? { ...s, acct } : s;
+    };
+    const states = new Map([refs.author, refs.reposter].filter(Boolean).map((r) => [r, state(r)]));
     const ctx = {
       settings,
       filteredPage: variants.isFilteredPage(location.pathname),
@@ -309,12 +328,11 @@
       viewerId: viewer.id,
       lookupsStopped: stopped || !settings.lookups,
     };
-    const verdict = rules.evaluate({ author: state(refs.author), reposter: state(refs.reposter), facts: refs.facts }, ctx);
+    const verdict = rules.evaluate({ author: states.get(refs.author), reposter: states.get(refs.reposter), facts: refs.facts }, ctx);
 
     // Spend lookups only where an answer can change what is shown.
     const useful = ctx.filteredPage && !ctx.isFocal && !settings.paused && signals.get('country').active(settings);
-    const now = Date.now();
-    const isViewer = (r) => viewer.id !== undefined && state(r).id === viewer.id;
+    const isViewer = (r) => viewer.id !== undefined && states.get(r).id === viewer.id;
     const need = useful ? [refs.author, refs.reposter].filter((r) => r && !isViewer(r) && !feed.fresh(entryOf(r), now)) : [];
     wanting.set(cell, need.map((r) => r.handle));
     io.observe(cell);
@@ -324,11 +342,12 @@
     // wins, a behaviour hit beats "checking" (database design, content.js).
     const live = dbLive() && ctx.filteredPage && !ctx.isFocal && !settings.paused && !(refs.author && isViewer(refs.author));
     const f = refs.facts ?? {};
-    const hit = live && verdict.why !== 'match'
-      ? memory.judge({ author: refs.author, reposter: refs.reposter, tweetId: post.tweetId, fp: f.fp, conv: f.conv, media: f.media },
-        flags, index, { on: settings.db, now, viewerId: viewer.id })
-      : null;
-    if (live) record(post.tweetId, refs, verdict, hit, now);
+    const bm = { author: refs.author, reposter: refs.reposter, tweetId: post.tweetId, fp: f.fp, conv: f.conv, media: f.media };
+    const judgeBm = (on) => memory.judge(bm, flags, index, { on, now, viewerId: viewer.id });
+    const hit = live && verdict.why !== 'match' ? judgeBm(settings.db) : null;
+    // The detection for the record, toggles aside: copy, everywhere and
+    // media only ever hit the Post's own Author.
+    if (live) record(post.tweetId, refs, verdict, hit, judgeBm(RECORDED), now);
 
     if (!verdict.hide && !hit) {
       hiddenHere.delete(post.tweetId);

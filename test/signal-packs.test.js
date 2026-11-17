@@ -172,3 +172,28 @@ test('prepare leaves the viewer out of the Score, as evaluate does', () => {
   const states = { author: { ...r.author, country: null }, reposter: { ...r.reposter, country: null }, facts: r.facts };
   assert.deepEqual(evaluate(states, ctx(s, { viewerId: '42' })), { hide: false });
 });
+
+// ---- account Tells ----
+
+test('fromUser: checkmarks from verification, is_blue_verified and an affiliate label', () => {
+  const badges = (extra) => walk(tweet('9', user('1', 'org', extra), { full_text: 'x' })).get('9').author.sig?.packs?.badges;
+  assert.deepEqual(badges({ verification: { verified_type: 'Business' }, is_blue_verified: true }), ['gold']);
+  assert.deepEqual(badges({ verification: { verified_type: 'Government' }, is_blue_verified: false }), ['grey']);
+  assert.deepEqual(badges({ verification: { verified: false }, is_blue_verified: true }), ['blue']);
+  const label = { label: { userLabelType: 'BusinessLabel', badge: { url: 'https://example.com/b.png' } } };
+  assert.deepEqual(badges({ verification: { verified_type: 'Business' }, affiliates_highlighted_label: label }), ['gold', 'affiliate']);
+  assert.equal(badges({ is_blue_verified: false, affiliates_highlighted_label: {} }), undefined);
+});
+
+test('judge: account Tells add at judge time, so behaviour that moves after intake re-judges without a re-score', () => {
+  const p = pack({ threshold: 4, tells: [{ w: 2, on: 'account', is: 'everywhere' }, { w: -3, on: 'account', is: 'gold' }], languages: agree(3) });
+  load([], [p]);
+  const s = settings(['bait']);
+  const a = post('like if you agree');
+  packsSignal.prepare([{ author: a.author, facts: a.facts }], { settings: s });
+  assert.deepEqual(evaluate(a, ctx(s)), { hide: false });
+  a.author.acct = { is: new Set(['everywhere']), hidden: new Set() };
+  assert.equal(evaluate(a, ctx(s)).rule, 'pack:bait');
+  a.author.sig = { packs: { badges: ['gold'] } };
+  assert.deepEqual(evaluate(a, ctx(s)), { hide: false });
+});

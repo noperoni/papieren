@@ -58,14 +58,31 @@
     return facts;
   }
 
+  // The checkmarks, from the captured payloads: verification.verified_type
+  // Business is gold and Government grey, whatever is_blue_verified says;
+  // blue is is_blue_verified without a type; an affiliate badge is a
+  // non-empty affiliates_highlighted_label.label, on any of them.
+  const TYPED = { Business: 'gold', Government: 'grey' };
+  function badgesOf(user) {
+    const out = [];
+    const typed = TYPED[user?.verification?.verified_type];
+    if (typed) out.push(typed);
+    else if (user?.is_blue_verified === true) out.push('blue');
+    const label = user?.affiliates_highlighted_label?.label;
+    if (label && typeof label === 'object' && Object.keys(label).length) out.push('affiliate');
+    return out;
+  }
+
   // Name and bio, core and profile_bio first: no captured user had the legacy pair.
   function fromUser(user) {
     const name = str(user?.core?.name) ?? str(user?.legacy?.name);
     const bio = str(user?.profile_bio?.description) ?? str(user?.legacy?.description);
-    if (!name && !bio) return undefined;
+    const badges = badgesOf(user);
+    if (!name && !bio && !badges.length) return undefined;
     const out = {};
     if (name) out.name = lib.fold(name);
     if (bio) out.bio = cut(lib.fold(bio), BIO_MAX);
+    if (badges.length) out.badges = badges;
     return out;
   }
 
@@ -113,16 +130,16 @@
 
   // ---- Score memo and judge ----
 
-  const memo = new WeakMap();   // facts object -> { key: the compiled set, best: compiled Pack or null }
+  const memo = new WeakMap();   // facts object -> { key: the compiled set, scores: Map(pack id -> Score) }
 
   // Of the Packs whose Score reaches their Threshold, the one exceeding it by
-  // the most; ties to the earlier in the list (Req 7.2).
-  function best(compiled, post, authors) {
-    const scores = lib.score(compiled, post, authors);
+  // the most; ties to the earlier in the list (Req 7.2). The account Tells'
+  // share is added here, at judge time: behaviour moves after intake.
+  function best(compiled, scores, account) {
     let top = null;
     let margin = -1;
     for (const p of compiled) {
-      const m = scores.get(p.id) - p.threshold;
+      const m = scores.get(p.id) + (account.get(p.id) ?? 0) - p.threshold;
       if (m > margin) {
         top = p;
         margin = m;
@@ -134,7 +151,7 @@
   function memoFor(facts, compiled, repost, authors) {
     let m = memo.get(facts);
     if (m?.key !== compiled) {
-      m = { key: compiled, best: best(compiled, { ...facts.sig.packs, repost }, authors.map((a) => a?.sig?.packs)) };
+      m = { key: compiled, scores: lib.score(compiled, { ...facts.sig.packs, repost }, authors.map((a) => a?.sig?.packs)) };
       memo.set(facts, m);
     }
     return m;
@@ -172,7 +189,9 @@
   function judge(post, ctx) {
     if (!post.facts?.sig?.packs) return null;
     const compiled = lib.compile(enabledPacks(ctx.settings));
-    const top = memoFor(post.facts, compiled, post.reposter !== undefined, post.authors).best;
+    const { scores } = memoFor(post.facts, compiled, post.reposter !== undefined, post.authors);
+    const account = lib.accountScore(compiled, post.authors.map((a) => ({ badges: a?.sig?.packs?.badges, acct: a?.acct })));
+    const top = best(compiled, scores, account);
     const handle = post.author?.handle ?? post.authors[0]?.handle;
     if (ctx.settings.packs?.mode === 'allbut') return top ? null : { handle, rule: OUTSIDE, label: 'outside your packs' };
     return top ? { handle, rule: `pack:${top.id}`, label: top.name } : null;

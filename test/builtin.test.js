@@ -33,6 +33,7 @@ test('pack.schema.json: its enums are the validator\'s', () => {
   assert.deepEqual(s.$defs.shapeTell.properties.measure.enum, lib.MEASURES);
   assert.deepEqual(s.$defs.mediaTell.properties.has.enum, lib.MEDIA);
   assert.deepEqual(s.$defs.contextTell.properties.is.enum, lib.CONTEXTS);
+  assert.deepEqual(s.$defs.accountTell.properties.is.enum, lib.ACCOUNT);
 });
 
 test('example.json uses every kind of Tell, every measure, a negative weight and two languages', () => {
@@ -41,7 +42,7 @@ test('example.json uses every kind of Tell, every measure, a negative weight and
   const kind = (t) => `${t.on}:${['phrase', 'pattern', 'measure', 'has', 'domain', 'is'].find((k) => k in t)}`;
   assert.deepEqual(new Set(tells.map(kind)), new Set([
     'text:phrase', 'text:pattern', 'name:phrase', 'name:pattern', 'bio:phrase', 'bio:pattern',
-    'shape:measure', 'media:has', 'media:domain', 'context:is',
+    'shape:measure', 'media:has', 'media:domain', 'context:is', 'account:is',
   ]));
   assert.deepEqual(new Set(tells.filter((t) => t.on === 'shape').map((t) => t.measure)), new Set(lib.MEASURES));
   assert.ok(tells.some((t) => t.w < 0));
@@ -51,7 +52,9 @@ test('example.json uses every kind of Tell, every measure, a negative weight and
 // ---- each Built_in_Pack against its fixtures ----
 
 // A fixture Post as X sends it: text HTML-escaped with its display range,
-// hashtags and links as entities, name and bio where the user result has them.
+// hashtags and links as entities, name, bio and checkmarks where the user
+// result has them. Behaviour (account, hiddenBefore) is what content.js
+// hands the AuthorState from the database.
 let n = 0;
 function record(p) {
   const id = String((n += 1));
@@ -68,6 +71,11 @@ function record(p) {
   if (p.quote) legacy.is_quote_status = true;
   const user = { __typename: 'User', rest_id: `u${id}`, core: { screen_name: 'someone', name: p.name ?? 'Someone' } };
   if (p.bio) user.profile_bio = { description: p.bio };
+  const badges = p.badges ?? [];
+  if (badges.includes('gold')) user.verification = { verified: false, verified_type: 'Business' };
+  if (badges.includes('grey')) user.verification = { verified: false, verified_type: 'Government' };
+  user.is_blue_verified = badges.includes('blue');
+  user.affiliates_highlighted_label = badges.includes('affiliate') ? { label: { userLabelType: 'BusinessLabel', description: 'Example Org' } } : {};
   const tweet = { __typename: 'Tweet', rest_id: id, core: { user_results: { result: user } }, legacy };
   return walkTimeline(JSON.stringify({ list: [tweet] })).tweets.get(id);
 }
@@ -83,9 +91,12 @@ for (const id of BUILTIN) {
     const ctx = { settings, filteredPage: true, isFocal: false, viewerId: 'v', lookupsStopped: false };
     const judged = (p) => {
       const r = record(p);
-      const verdict = evaluate({ author: { ...r.author, country: null }, facts: r.facts }, ctx);
-      const score = lib.score(lib.compile([pack]), { ...r.facts.sig.packs, repost: false }, [r.author.sig?.packs]).get(id);
-      return { verdict, why: `score ${score} of ${pack.threshold}: ${p.text}` };
+      const acct = { is: new Set(p.account ?? []), hidden: new Set(p.hiddenBefore ? [id] : []) };
+      const verdict = evaluate({ author: { ...r.author, country: null, acct }, facts: r.facts }, ctx);
+      const compiled = lib.compile([pack]);
+      const score = lib.score(compiled, { ...r.facts.sig.packs, repost: false }, [r.author.sig?.packs]).get(id)
+        + (lib.accountScore(compiled, [{ badges: r.author.sig?.packs?.badges, acct }]).get(id) ?? 0);
+      return { verdict, why: `score ${score} of ${pack.threshold}: ${p.text} ${JSON.stringify([p.badges, p.account, p.hiddenBefore])}` };
     };
     assert.ok(fx.hide.length >= 5 && fx.show.length >= 5);
     for (const p of fx.hide) {

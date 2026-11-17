@@ -367,3 +367,30 @@ test('a Pattern that throws at match time is skipped and logged once (Error Hand
   assert.equal(score(c, { text: 'x' }, [{ name: 'amy x' }]).get('bait'), 2);
   assert.equal(warn.mock.callCount(), 1);
 });
+
+// ---- account Tells ----
+
+test('account Tells: in tells only, every value of ACCOUNT, through the line syntax and back', () => {
+  const { ACCOUNT, accountScore } = require('../src/lib/packs.js');
+  const tells = ACCOUNT.map((is, i) => ({ w: i % 2 ? 1 : -1, on: 'account', is }));
+  assert.ok(validate(pack({ tells })).ok);
+  assert.match(refused(pack({ tells: [{ w: 1, on: 'account', is: 'verified' }] })), /is must be one of gold, grey/);
+  assert.match(refused(pack({ languages: { en: [{ w: 1, on: 'account', is: 'gold' }] } })), /only text tells go under a language/);
+  const lines = toLines(tells);
+  assert.match(lines, /^-1 account: gold$/m);
+  assert.deepEqual(parseLines(lines, 'any'), { ok: true, tells });
+  assert.equal(parseLines('2 account: gold', 'text').ok, true); // a language textarea reads it as a Phrase
+  assert.equal(typeof accountScore, 'function');
+});
+
+test('accountScore: badges or behaviour of either Author, each Tell once, hidden-before per Pack', () => {
+  const { accountScore } = require('../src/lib/packs.js');
+  const tells = [{ w: -3, on: 'account', is: 'gold' }, { w: 2, on: 'account', is: 'everywhere' }, { w: 2, on: 'account', is: 'hidden-before' }];
+  const compiled = compile([pack({ tells }), pack({ id: 'other', tells }), pack({ id: 'none' })]);
+  const acct = (is, hidden = []) => ({ is: new Set(is), hidden: new Set(hidden) });
+  const s = accountScore(compiled, [{ badges: ['gold'], acct: acct(['everywhere'], ['bait']) }, { badges: ['gold'], acct: acct(['everywhere']) }]);
+  assert.deepEqual([...s], [['bait', 1], ['other', -1]]);
+  assert.deepEqual([...accountScore(compiled, [])], [['bait', 0], ['other', 0]]);
+  // score() leaves account Tells to accountScore().
+  assert.equal(score(compiled, { text: 'x', lang: 'en' }, [{ name: 'x' }]).get('bait'), 0);
+});

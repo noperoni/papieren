@@ -352,6 +352,20 @@ test('copy-paste: three Authors with one text hide with the count; the flush car
   assert.deepEqual(f.stats, { country: { judged: 4, hid: 1 }, 'bm:copy': { judged: 4, hid: 3 }, 'bm:offender': { judged: 4, hid: 0 } });
 });
 
+test('sightings are recorded with every detection off; the toggles decide hiding only', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ cells });
+  await settle();
+  t.fromPage(payload(...cells.map((c, i) => tweet(c.post.tweetId, user(`10${i}`, `a${i}`),
+    { conversation_id_str: 'c1', in_reply_to_status_id_str: '1', full_text: SAME, extended_entities: { media: [{ id_str: 'p9' }] } }))));
+  await settle();
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  await hide(t);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  const kinds = (k) => f.memory.filter((m) => m.kind === k).map((m) => m.author).sort();
+  assert.deepEqual([kinds('copy'), kinds('conv'), kinds('media')], [['100', '101', '102'], ['100', '101', '102'], ['100', '101', '102']]);
+});
+
 test('worker flags hide at boot; neither a followed Author nor the viewer is hit (Req 3.4, 3.8)', async () => {
   const bad = fakeCell('21', 'bad');
   const friend = fakeCell('22', 'friend');
@@ -361,7 +375,7 @@ test('worker flags hide at boot; neither a followed Author nor the viewer is hit
   await settle();
   t.fromPage(payload(tweet('21', user('200', 'bad')), tweet('22', user('201', 'friend', { legacy: { following: true } })), tweet('23', user('42', 'me_myself'))));
   await settle();
-  assert.equal(bad.dataset.papierenLabel, 'Hidden: @bad · repeat offender, hidden 5 times (click to show)');
+  assert.equal(bad.dataset.papierenLabel, 'Hidden: @bad · repeat offender, 5 detections (click to show)');
   assert.equal(friend.dataset.papieren, undefined);
   assert.equal(mine.dataset.papieren, undefined);
 });
@@ -478,4 +492,51 @@ test('packs: All_But hides what no Pack matches; a post X sent no payload for st
   assert.equal(bait.dataset.papieren, undefined);
   assert.equal(plain.dataset.papierenLabel, 'Hidden: @amy · outside your packs (click to show)');
   assert.equal(domOnly.dataset.papieren, undefined);
+});
+
+// --- Account Tells (packs design, account Tells) ---
+
+const RAGE = {
+  papierenPack: 1, id: 'rage', name: 'Rage', kind: 'junk', description: 'Insults.', version: 1, threshold: 3,
+  tells: [{ w: 2, on: 'account', is: 'everywhere' }, { w: 2, on: 'account', is: 'hidden-before' }],
+  languages: { en: [{ w: 1, on: 'text', phrase: 'clown' }, { w: 3, on: 'text', phrase: 'cope harder' }] },
+};
+
+test('account Tells: a worker Reply_Everywhere flag tips an insult over a Pack\'s Threshold, every toggle off', async () => {
+  const insult = fakeCell('41', 'troll');
+  const same = fakeCell('42', 'calm');
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['rage'] } }, 'packs:builtin': [RAGE] }, cells: [insult, same] });
+  t.replies['db-flags'] = { flags: { copy: {}, everywhere: { 400: 5 }, media: {}, offender: {}, packs: {} } };
+  await settle();
+  t.fromPage(payload(tweet('41', user('400', 'troll'), { full_text: 'clown', lang: 'en' }), tweet('42', user('401', 'calm'), { full_text: 'clown', lang: 'en' })));
+  await settle();
+  assert.equal(insult.dataset.papierenLabel, 'Hidden: @troll · Rage (click to show)');
+  assert.equal(same.dataset.papieren, undefined);
+});
+
+test('account Tells: a Pack hide is flushed as a pack row and weighs on the Author\'s newer Posts only', async () => {
+  const first = fakeCell('51', 'amy');
+  const later = fakeCell('52', 'amy');
+  const t = load({ local: { settings: { packs: { mode: 'block', on: ['rage'] } }, 'packs:builtin': [RAGE] }, cells: [first, later] });
+  await settle();
+  t.fromPage(payload(tweet('51', user('7', 'amy'), { full_text: 'Cope harder', lang: 'en' }), tweet('52', user('7', 'amy'), { full_text: 'clown', lang: 'en' })));
+  await settle();
+  assert.deepEqual([first.dataset.papieren, later.dataset.papieren], ['hidden', 'hidden']);
+  await hide(t);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  assert.deepEqual(f.memory.filter((m) => m.kind === 'pack').map((m) => [m.tweet, m.author, m.rule]).sort(),
+    [['51', '7', 'pack:rage'], ['52', '7', 'pack:rage']]);
+});
+
+test('offences: a detection is recorded with its toggle off, and nothing hides on it', async () => {
+  const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
+  const t = load({ cells });
+  await settle();
+  copyThread(t, cells);
+  await settle();
+  assert.ok(cells.every((c) => c.dataset.papieren === undefined));
+  await hide(t);
+  const [f] = t.sent.filter((m) => m.type === 'db-flush');
+  assert.deepEqual(f.memory.filter((m) => m.kind === 'offence').map((m) => m.rule), ['bm:copy', 'bm:copy', 'bm:copy']);
+  assert.deepEqual(f.history, []);
 });

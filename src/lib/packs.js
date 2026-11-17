@@ -9,6 +9,9 @@
   const MEASURES = ['emoji', 'hashtags', 'caps', 'lines', 'length'];
   const MEDIA = ['image', 'video', 'gif', 'poll', 'link'];
   const CONTEXTS = ['reply', 'quote', 'repost', 'original'];
+  // Account Tells: the checkmarks X shows, then behaviour from the
+  // database. Judged on either Author of a repost, as name and bio are.
+  const ACCOUNT = ['gold', 'grey', 'affiliate', 'blue', 'everywhere', 'offences', 'copy', 'recycled', 'hidden-before'];
   const MAX_TELLS = 300;
   const MAX_FILE = 256 * 1024;   // bytes, refused before parsing
   const MAX_PATTERN = 200;
@@ -156,6 +159,7 @@
       case 'shape': return shapeTell(t, w);
       case 'media': return mediaTell(t, w);
       case 'context': return CONTEXTS.includes(t.is) ? { w, on, is: t.is } : `is must be one of ${CONTEXTS.join(', ')}`;
+      case 'account': return ACCOUNT.includes(t.is) ? { w, on, is: t.is } : `is must be one of ${ACCOUNT.join(', ')}`;
       default: return `unknown tell input "${on}"`;
     }
   }
@@ -259,6 +263,7 @@
     if ((m = /^media:\s*(\S+)$/u.exec(body))) return { w, on: 'media', has: m[1] };
     if ((m = /^domain:\s*(\S+)$/u.exec(body))) return { w, on: 'media', domain: m[1] };
     if ((m = /^context:\s*(\S+)$/u.exec(body))) return { w, on: 'context', is: m[1] };
+    if ((m = /^account:\s*(\S+)$/u.exec(body))) return { w, on: 'account', is: m[1] };
     if ((m = SHAPE_LINE.exec(body))) {
       if (m[4] === m[2]) return 'use >= and <= at most once each';
       const t = { w, on: 'shape', measure: m[1] };
@@ -267,7 +272,7 @@
       return t;
     }
     return 'not a tell: phrases and /patterns/ go under a language; here use name:, bio:, '
-      + `${MEASURES.join(', ')}, media:, domain: or context:`;
+      + `${MEASURES.join(', ')}, media:, domain:, context: or account:`;
   }
 
   // A textarea -> Tells, or the first refused line (1-based) and its reason.
@@ -298,7 +303,7 @@
         case 'bio': return `${t.on}: ${pp(t)}`;
         case 'shape': return [t.measure, t.min !== undefined && `>= ${t.min}`, t.max !== undefined && `<= ${t.max}`].filter(Boolean).join(' ');
         case 'media': return t.has !== undefined ? `media: ${t.has}` : `domain: ${t.domain}`;
-        default: return `context: ${t.is}`;
+        default: return `${t.on}: ${t.is}`;
       }
     };
     return tells.map((t) => `${t.w} ${body(t)}`).join('\n');
@@ -360,11 +365,15 @@
     return { input, re, w: phrases.map((p) => p.w), implied, edges };
   }
 
+  // account Tells stay apart: their behaviour changes after intake, so
+  // score() leaves them to accountScore() at judge time.
   function compileList(tells) {
     const byInput = new Map();   // input -> Map(phrase key -> weight)
-    const list = { phrases: [], patterns: [], rest: [] };
+    const list = { phrases: [], patterns: [], rest: [], account: [] };
     for (const t of tells) {
-      if (t.phrase !== undefined) {
+      if (t.on === 'account') {
+        list.account.push(t);
+      } else if (t.phrase !== undefined) {
         const keys = byInput.get(t.on) ?? byInput.set(t.on, new Map()).get(t.on);
         const k = phraseKey(t.phrase);
         if (!keys.has(k)) keys.set(k, t.w);
@@ -467,7 +476,8 @@
 
   // post: { text (folded), lang, shape, media, domains, reply, quote, repost };
   // authors: [{ name, bio }] folded, both Authors of a repost (Req 1.4).
-  // A Tell whose input is missing is not met (Req 1.6). -> Map(pack id -> Score)
+  // A Tell whose input is missing is not met (Req 1.6). Account Tells are
+  // left out: accountScore() adds them. -> Map(pack id -> Score)
   function score(compiled, post, authors = []) {
     const inputs = { text: [post.text], name: authors.map((a) => a?.name), bio: authors.map((a) => a?.bio) };
     const out = new Map();
@@ -478,8 +488,27 @@
     return out;
   }
 
+  // The account Tells' share of each Score, read at judge time.
+  // authors: [{ badges?: string[], acct?: { is: Set, hidden: Set of Pack ids } }],
+  // both Authors of a repost; a Tell met by either counts once.
+  // -> Map(pack id -> sum), only for Packs with account Tells.
+  function accountScore(compiled, authors = []) {
+    const out = new Map();
+    for (const p of compiled) {
+      if (!p.any.account.length) continue;
+      const met = (t) => authors.some((a) => (t.is === 'hidden-before'
+        ? a?.acct?.hidden.has(p.id) === true
+        : a?.badges?.includes(t.is) === true || a?.acct?.is.has(t.is) === true));
+      let sum = 0;
+      for (const t of p.any.account) if (met(t)) sum += t.w;
+      out.set(p.id, sum);
+    }
+    return out;
+  }
+
   const packs = {
-    KINDS, MEASURES, MEDIA, CONTEXTS, MAX_TELLS, MAX_FILE, fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score,
+    KINDS, MEASURES, MEDIA, CONTEXTS, ACCOUNT, MAX_TELLS, MAX_FILE,
+    fold, checkPattern, validate, parseLines, toLines, visible, measure, compile, score, accountScore,
   };
 
   globalThis.Papieren ??= {};

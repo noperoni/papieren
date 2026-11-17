@@ -13,7 +13,10 @@
     { "w": 1, "on": "bio", "pattern": "\\bdm (?:for|4) (?:promo|shout ?outs?)\\b" },
     { "w": 1, "on": "shape", "measure": "emoji", "min": 5 },
     { "w": 1, "on": "shape", "measure": "hashtags", "min": 5 },
-    { "w": -1, "on": "context", "is": "reply" }
+    { "w": -1, "on": "context", "is": "reply" },
+    { "w": 2, "on": "account", "is": "everywhere" },
+    { "w": 2, "on": "account", "is": "copy" },
+    { "w": 1, "on": "account", "is": "recycled" }
   ],
   "languages": {
     "en": [

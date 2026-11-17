@@ -17,7 +17,11 @@
     { "w": 1, "on": "bio", "phrase": "turn on notifications" },
     { "w": 1, "on": "bio", "pattern": "\\bdm (?:for|4) (?:promo|promotions|ads|business|submissions)\\b" },
     { "w": 1, "on": "shape", "measure": "caps", "min": 0.5 },
-    { "w": -2, "on": "context", "is": "reply" }
+    { "w": -2, "on": "context", "is": "reply" },
+    { "w": -3, "on": "account", "is": "gold" },
+    { "w": -3, "on": "account", "is": "grey" },
+    { "w": -2, "on": "account", "is": "affiliate" },
+    { "w": -1, "on": "account", "is": "blue" }
   ],
   "languages": {
     "en": [

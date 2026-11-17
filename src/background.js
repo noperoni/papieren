@@ -172,7 +172,7 @@ async function sweep(conf, now) {
     // After the deletions, so no flag outlives its rows.
     const old = await collect(t, 'flags');
     const next = await Promise.all(old.map((f) => recount(t, f.kind, f.key, now)));
-    changed = (await db.count(t, 'memory')) !== memoryRows || next.some((f, i) => f.n !== old[i].n || f.first !== old[i].first);
+    changed = (await db.count(t, 'memory')) !== memoryRows || next.some((f, i) => f.n !== old[i].n || JSON.stringify(f.first) !== JSON.stringify(old[i].first));
     await db.put(t, 'meta', now, 'lastSweep');
   });
   if (changed) await dropTabState(now);

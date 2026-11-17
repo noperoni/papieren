@@ -31,10 +31,14 @@ test('flagFor media: distinct Authors and the earliest tweet id', () => {
   assert.deepEqual(flagFor('media', [row('1', '1000'), row('2', '999'), row('3', '10000')], NOW), { n: 3, first: '999' });
 });
 
-test('flagFor offence: distinct hidden tweets of one Author, null under 5', () => {
-  const row = (key) => ({ kind: 'offence', key, author: '9', rule: 'bm:copy', t: NOW });
-  assert.equal(flagFor('offence', ['1', '2', '3', '4'].map(row), NOW), null);
-  assert.deepEqual(flagFor('offence', ['1', '2', '3', '4', '5'].map(row), NOW), { n: 5 });
+test('flagFor offence and pack: distinct tweets of one Author from the first, the earliest tweet per rule', () => {
+  const row = (kind, key, rule) => ({ kind, key, author: '9', rule, t: NOW });
+  assert.equal(flagFor('offence', [], NOW), null);
+  assert.deepEqual(flagFor('offence', [row('offence', '30', 'bm:copy')], NOW), { n: 1, first: { 'bm:copy': '30' } });
+  const offences = [row('offence', '30', 'bm:copy'), row('offence', '200', 'bm:media'), row('offence', '9', 'bm:copy'), row('offence', '30', 'bm:copy')];
+  assert.deepEqual(flagFor('offence', offences, NOW), { n: 3, first: { 'bm:copy': '9', 'bm:media': '200' } });
+  const hides = [row('pack', '50', 'pack:ragebait'), row('pack', '40', 'pack:ragebait'), row('pack', '60', 'pack:bait')];
+  assert.deepEqual(flagFor('pack', hides, NOW), { n: 3, first: { 'pack:ragebait': '40', 'pack:bait': '60' } });
 });
 
 // --- Retention (Req 2.3) and the size cap (Req 2.5) ---
@@ -100,6 +104,12 @@ test('parseFlush: an offence for a country or Pack hide, or for the offender det
   assert.deepEqual(out.memory.map((r) => r.key), ['3']);
 });
 
+test('parseFlush: a pack row needs a tweet and a pack:<id> rule', () => {
+  const hide = (tweet, rule) => ({ kind: 'pack', author: '4', handle: 'd', tweet, rule, t: NOW });
+  const out = parseFlush({ memory: [hide('1', 'pack:ragebait'), hide('2', 'bm:copy'), hide('3', 'pack:Bad Id'), hide(undefined, 'pack:x')] }, NOW);
+  assert.deepEqual(out.memory, [{ kind: 'pack', key: '1', author: '4', handle: 'd', tweet: '1', rule: 'pack:ragebait', t: NOW }]);
+});
+
 test('keepRow: a new key as it is, the newer t wins, a media row keeps the earlier tweet', () => {
   const copy = (t, handle) => ({ kind: 'copy', key: 'f', author: '1', handle, t });
   const media = (tweet, t) => ({ kind: 'media', key: 'm', author: '1', handle: 'a', tweet, t });
@@ -134,10 +144,10 @@ test('flagKeys: copy and media by key, conv and offence by author, each once', (
   const rows = [
     { kind: 'copy', key: 'f', author: '1' }, { kind: 'copy', key: 'f', author: '2' },
     { kind: 'conv', key: 'c1', author: '1' }, { kind: 'conv', key: 'c2', author: '1' },
-    { kind: 'media', key: 'm', author: '1' }, { kind: 'offence', key: '600', author: '4' },
+    { kind: 'media', key: 'm', author: '1' }, { kind: 'offence', key: '600', author: '4' }, { kind: 'pack', key: '601', author: '4' },
   ];
   assert.deepEqual(flagKeys(rows), [
-    { kind: 'copy', key: 'f' }, { kind: 'conv', key: '1' }, { kind: 'media', key: 'm' }, { kind: 'offence', key: '4' }]);
+    { kind: 'copy', key: 'f' }, { kind: 'conv', key: '1' }, { kind: 'media', key: 'm' }, { kind: 'offence', key: '4' }, { kind: 'pack', key: '4' }]);
 });
 
 test('flagRange: [kind, key] for copy and media, the author\'s 24 h for conv, all for offence', () => {
@@ -145,19 +155,27 @@ test('flagRange: [kind, key] for copy and media, the author\'s 24 h for conv, al
   assert.deepEqual(flagRange('media', 'm', NOW), { index: 'key', lower: ['media', 'm'], upper: ['media', 'm'] });
   assert.deepEqual(flagRange('conv', '1', NOW), { index: 'author', lower: ['conv', '1', NOW - 24 * HOUR], upper: ['conv', '1', Infinity] });
   assert.deepEqual(flagRange('offence', '4', NOW), { index: 'author', lower: ['offence', '4', -Infinity], upper: ['offence', '4', Infinity] });
+  assert.deepEqual(flagRange('pack', '4', NOW), { index: 'author', lower: ['pack', '4', -Infinity], upper: ['pack', '4', Infinity] });
 });
 
 test('toFlags: memory.js\'s Flags shape, 0 for a deleted flag, unknown kinds skipped', () => {
   const flags = toFlags([
     { kind: 'copy', key: 'f', n: 3, t: NOW }, { kind: 'conv', key: '1', n: 5 }, { kind: 'media', key: 'm', n: 4, first: '99' },
     { kind: 'offence', key: '4', n: 0 }, { kind: 'media', key: 'gone', n: 0 }, { kind: 'toString', key: 'x', n: 9 },
+    { kind: 'offence', key: '5', n: 2, first: { 'bm:copy': '7' } }, { kind: 'pack', key: '5', n: 1, first: { 'pack:x': '8' } },
   ]);
-  assert.deepEqual(flags, { copy: { f: 3 }, everywhere: { 1: 5 }, media: { m: { n: 4, first: '99' }, gone: 0 }, offender: { 4: 0 } });
+  assert.deepEqual(flags, {
+    copy: { f: 3 }, everywhere: { 1: 5 }, media: { m: { n: 4, first: '99' }, gone: 0 },
+    offender: { 4: 0, 5: { n: 2, first: { 'bm:copy': '7' } } }, packs: { 5: { n: 1, first: { 'pack:x': '8' } } },
+  });
   const live = memory.emptyFlags();
   live.media.gone = { n: 3, first: '1' };
   live.offender[4] = 6;
   memory.merge(live, flags);
-  assert.deepEqual(live, { copy: { f: 3 }, everywhere: { 1: 5 }, media: { m: { n: 4, first: '99' } }, offender: {} });
+  assert.deepEqual(live, {
+    copy: { f: 3 }, everywhere: { 1: 5 }, media: { m: { n: 4, first: '99' } },
+    offender: { 5: { n: 2, first: { 'bm:copy': '7' } } }, packs: { 5: { n: 1, first: { 'pack:x': '8' } } },
+  });
 });
 
 test('revealTarget: the day\'s row, else the latest, none when the tweet has no row', () => {

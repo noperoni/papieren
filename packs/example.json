@@ -19,7 +19,10 @@
     { "w": -1, "on": "shape", "measure": "length", "min": 600 },
     { "w": 1, "on": "media", "has": "image" },
     { "w": 2, "on": "media", "domain": "transfermarkt.com" },
-    { "w": -2, "on": "context", "is": "reply" }
+    { "w": -2, "on": "context", "is": "reply" },
+    { "w": -2, "on": "account", "is": "gold" },
+    { "w": 1, "on": "account", "is": "everywhere" },
+    { "w": 2, "on": "account", "is": "hidden-before" }
   ],
   "languages": {
     "en": [

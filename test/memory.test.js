@@ -126,6 +126,66 @@ test('offender: 4 hidden posts no, 5 yes; the reposter is judged too', () => {
   assert.deepEqual(judge(repost, emptyFlags(), index, ctx()), { rule: 'bm:offender', handle: 'user9', n: 5 });
 });
 
+test('offender: the worker\'s { n, first } and an older bare n both count', () => {
+  const flags = emptyFlags();
+  flags.offender[9] = { n: 5, first: { 'bm:copy': '1' } };
+  flags.offender[8] = 5;
+  assert.equal(judge({ author: user('9'), tweetId: '500' }, flags, createIndex(), ctx()).n, 5);
+  assert.equal(judge({ author: user('8'), tweetId: '500' }, flags, createIndex(), ctx()).n, 5);
+});
+
+// --- account Tells' behaviour facts (packs design, account Tells) ---
+
+const account = (u, flags, index, tweetId = '500') => memory.account(u, flags, index, { now: NOW, viewerId: 'v1', tweetId });
+
+test('account: Reply_Everywhere from 5 conversations in 24 h, from the worker or the tab', () => {
+  const index = createIndex();
+  for (const c of ['c1', 'c2', 'c3', 'c4']) observe(index, { kind: 'conv', key: c, author: '1', t: NOW - HOUR });
+  assert.deepEqual([...account(user('1'), emptyFlags(), index).is], []);
+  observe(index, { kind: 'conv', key: 'c5', author: '1', t: NOW - HOUR });
+  assert.deepEqual([...account(user('1'), emptyFlags(), index).is], ['everywhere']);
+  const flags = emptyFlags();
+  flags.everywhere[2] = 5;
+  assert.deepEqual([...account(user('2'), flags, createIndex()).is], ['everywhere']);
+});
+
+test('account: offences from 2 detections, with no upper bound', () => {
+  const index = createIndex();
+  observe(index, { kind: 'offence', key: '100', author: '1', rule: 'bm:everywhere', t: NOW });
+  assert.equal(account(user('1'), emptyFlags(), index).is.has('offences'), false);
+  observe(index, { kind: 'offence', key: '101', author: '1', rule: 'bm:everywhere', t: NOW });
+  assert.equal(account(user('1'), emptyFlags(), index).is.has('offences'), true);
+  const flags = emptyFlags();
+  flags.offender[1] = { n: 9, first: {} };
+  assert.equal(account(user('1'), flags, createIndex()).is.has('offences'), true);
+});
+
+test('account: copy, recycled and hidden-before only from an older Post, never the Post itself', () => {
+  const index = createIndex();
+  observe(index, { kind: 'offence', key: '400', author: '1', rule: 'bm:copy', t: NOW });
+  observe(index, { kind: 'pack', key: '400', author: '1', rule: 'pack:ragebait', t: NOW });
+  const flags = emptyFlags();
+  flags.offender[1] = { n: 1, first: { 'bm:media': '450' } };
+  flags.packs[1] = { n: 1, first: { 'pack:bait': '600' } };
+  const later = account(user('1'), flags, index, '500');
+  assert.deepEqual([...later.is].sort(), ['copy', 'recycled']);
+  assert.deepEqual([...later.hidden], ['ragebait']);
+  const itself = account(user('1'), flags, index, '400');
+  assert.deepEqual([[...itself.is], [...itself.hidden]], [[], []]);
+  // A shorter id is older whatever its digits: '99' before '400'.
+  observe(index, { kind: 'pack', key: '99', author: '1', rule: 'pack:bait', t: NOW });
+  assert.deepEqual([...account(user('1'), flags, index, '400').hidden], ['bait']);
+});
+
+test('account: none for the viewer, a followed Author or one without an id (Req 3.8)', () => {
+  const flags = emptyFlags();
+  flags.everywhere.v1 = 9;
+  flags.everywhere[3] = 9;
+  assert.equal(account(user('v1'), flags, createIndex()), undefined);
+  assert.equal(account(user('3', { followed: true }), flags, createIndex()), undefined);
+  assert.equal(account({ handle: 'nobody' }, flags, createIndex()), undefined);
+});
+
 // --- order, switches, exemptions (Req 3.5, 3.8) ---
 
 test('judge order: copy, then everywhere, then media, then offender', () => {
@@ -171,7 +231,7 @@ test('merge: counts replace, zero and null drop the key', () => {
   flags.copy.a = 3;
   flags.media.m = { n: 3, first: '1' };
   merge(flags, { copy: { a: 0, b: 4 }, media: { m: { n: 0 } }, offender: { x: 5 }, everywhere: { y: null } });
-  assert.deepEqual(flags, { copy: { b: 4 }, everywhere: {}, media: {}, offender: { x: 5 } });
+  assert.deepEqual(flags, { copy: { b: 4 }, everywhere: {}, media: {}, offender: { x: 5 }, packs: {} });
   merge(flags, undefined);
   assert.deepEqual(flags.copy, { b: 4 });
 });
@@ -182,5 +242,5 @@ test('labels name the handle, the detection and its count', () => {
   assert.equal(label({ rule: 'bm:copy', handle: 'bot', n: 4 }), 'Hidden: @bot · copy-paste reply, 4 accounts (click to show)');
   assert.equal(label({ rule: 'bm:everywhere', handle: 'bot', n: 6 }), 'Hidden: @bot · replies everywhere, 6 conversations in 24 h (click to show)');
   assert.equal(label({ rule: 'bm:media', handle: 'bot', n: 3 }), 'Hidden: @bot · recycled media, 3 accounts (click to show)');
-  assert.equal(label({ rule: 'bm:offender', handle: 'bot', n: 7 }), 'Hidden: @bot · repeat offender, hidden 7 times (click to show)');
+  assert.equal(label({ rule: 'bm:offender', handle: 'bot', n: 7 }), 'Hidden: @bot · repeat offender, 7 detections (click to show)');
 });

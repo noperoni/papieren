@@ -4,13 +4,16 @@
     { "text": "JUST IN: Tech giant reportedly in talks to buy a chipmaker for $40B. Sources say a deal could land this week.", "name": "Market Insider", "bio": "Real-time news and alerts. Not affiliated with any exchange." },
     { "text": "⚠️ DEVELOPING: Singer cancels the remaining tour dates. Here's what we know so far. Follow @popdaily for updates.", "name": "Pop Culture Daily" },
     { "text": "🔴 WATCH: Footage shows the moment the bridge collapsed in the storm 🇧🇷 (via @localnews)", "media": ["video"], "name": "Disaster Updates 24/7" },
-    { "text": "BREAKING NEWS: Earthquake off the coast, tsunami warning issued. Stay tuned. 🚨", "name": "Global Headlines" }
+    { "text": "BREAKING NEWS: Earthquake off the coast, tsunami warning issued. Stay tuned. 🚨", "name": "Global Headlines" },
+    { "text": "BREAKING: Senate passes the spending bill after an overnight session. Here's what we know.", "name": "The Daily Example", "bio": "Independent journalism since 1851." },
+    { "text": "🚨🇺🇸 BREAKING: Senate passes the spending bill, according to reports. More details to follow.", "name": "World Alert News", "badges": ["blue"] }
   ],
   "show": [
     { "text": "Breaking: my sourdough starter finally rose. Huge news in this kitchen.", "name": "Ana" },
     { "text": "According to reports from the ground, the marathon route changes next year. Planning my training around it." },
     { "text": "Thanks, we have corrected the time in the article.", "reply": true, "name": "City News Desk" },
     { "text": "Watch: my first attempt at a kickflip 😂" },
-    { "text": "🚨 Fire drill at the office at 3pm, don't panic" }
+    { "text": "🚨 Fire drill at the office at 3pm, don't panic" },
+    { "text": "BREAKING: Senate passes the spending bill after an overnight session. Here's what we know.", "name": "The Daily Example", "bio": "Independent journalism since 1851.", "badges": ["gold"] }
   ]
 }
