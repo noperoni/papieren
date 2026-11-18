@@ -459,7 +459,11 @@
     if (document.hidden) {
       clearTimeout(timer);
       clearTimeout(flushTimer);
-      sendFlush(); // one last flush, then none until the tab is visible again
+      flushTimer = 0;
+      // One last flush if the 5 s spacing allows it, then none until the tab
+      // is visible again (Req 7.3). Inside the spacing the rows wait:
+      // a tab closed while hidden loses them, as a visible one does.
+      if (Date.now() - lastFlush >= FLUSH_MS) sendFlush();
     } else {
       pump();
       queueFlush();

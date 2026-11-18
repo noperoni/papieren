@@ -97,6 +97,12 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
     clearTimeout: (id) => { if (id) pending[id - 1] = null; },
     crypto: { subtle }, TextEncoder,
   });
+  // The script's clock, moved on by advance(ms); timers still run only by runTimers().
+  let skew = 0;
+  const ContextDate = vm.runInContext('Date', context);
+  const realNow = ContextDate.now;
+  ContextDate.now = () => realNow() + skew;
+  const advance = (ms) => { skew += ms; };
   for (const lib of LIBS) vm.runInContext(lib, context);
   const v = context.Papieren.variants;
   const adapter = {
@@ -119,7 +125,7 @@ function load({ local = {}, cells = [], layout = true, cookie = 'twid=u%3D42; ct
       fn?.();
     }
   };
-  return { data, sent, timers, runTimers, toPage, fromPage, inView, location, click, stats, replies, area, document, runtime: chrome.runtime, observed };
+  return { data, sent, timers, runTimers, advance, toPage, fromPage, inView, location, click, stats, replies, area, document, runtime: chrome.runtime, observed };
 }
 
 test('X\'s own About answer is cached with lookups off (Req 3.8)', async () => {
@@ -315,6 +321,11 @@ const hide = async (t) => {
   t.document.dispatchEvent(new Event('visibilitychange'));
   await settle();
 };
+const show = async (t) => {
+  t.document.hidden = false;
+  t.document.dispatchEvent(new Event('visibilitychange'));
+  await settle();
+};
 const copyThread = (t, cells) => t.fromPage(payload(...cells.map((c, i) => reply(c.post.tweetId, user(`10${i}`, `a${i}`), SAME))));
 
 test('copy-paste: three Authors with one text hide with the count; the flush carries fingerprints, never text (Req 3.1, 3.6, 4, 6.1)', async () => {
@@ -428,7 +439,7 @@ test('an { error } answer runs the tab without the database; a settings change a
   assert.ok(cells.every((c) => c.dataset.papieren === 'hidden'));
 });
 
-test('flush: at most one per 5 s, none while hidden (Req 7.3)', async () => {
+test('flush: at most one per 5 s, hiding included, none while hidden (Req 7.3)', async () => {
   const cells = ['11', '12', '13'].map((id, i) => fakeCell(id, `a${i}`));
   const t = load({ local: { settings: { db: { copy: true } } }, cells });
   await settle();
@@ -442,11 +453,17 @@ test('flush: at most one per 5 s, none while hidden (Req 7.3)', async () => {
   assert.ok(t.timers.at(-1) > 4000 && t.timers.at(-1) <= 5000);
   assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
 
-  await hide(t); // one last flush, then no timer until the tab is visible again
-  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 2);
+  await hide(t); // inside the 5 s spacing: no flush, the rows wait
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 1);
   const timers = t.timers.length;
-  t.click(cells[1]);
+  t.click(cells[1]); // and no timer while hidden
   assert.equal(t.timers.length, timers);
+
+  await show(t); // visible again: the waiting rows get their timer
+  assert.equal(t.timers.length, timers + 1);
+  t.advance(5000);
+  await hide(t); // past the spacing: one last flush
+  assert.equal(t.sent.filter((m) => m.type === 'db-flush').length, 2);
 });
 
 // --- Packs (packs design, task 5.2) ---

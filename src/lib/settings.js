@@ -123,11 +123,16 @@
     if ('budget' in raw && !Number.isFinite(raw.budget)) return reject('budget must be a number.');
     const problem = ('db' in raw ? dbProblem(raw.db) : null) ?? ('packs' in raw ? packsProblem(raw.packs) : null);
     if (problem) return reject(problem);
+    // A field the file leaves out keeps its current value, never the default:
+    // a hand-edited db block without keep would cut Retention, and the next
+    // sweep delete rows.
     const cur = normalize(current);
-    const db = 'db' in raw ? raw.db : cur.db;
+    const db = 'db' in raw ? { ...cur.db, ...raw.db, keep: { ...cur.db.keep, ...raw.db.keep } } : cur.db;
     const known = new Set(packIds);
-    const listed = [...new Set('packs' in raw ? raw.packs.on ?? [] : [])];
-    const packs = 'packs' in raw ? { ...raw.packs, on: listed.filter((id) => known.has(id)) } : cur.packs;
+    const listed = [...new Set(raw.packs?.on ?? [])];
+    const packs = 'packs' in raw
+      ? { ...cur.packs, ...raw.packs, on: 'on' in raw.packs ? listed.filter((id) => known.has(id)) : cur.packs.on }
+      : cur.packs;
     const dropped = listed.filter((id) => !known.has(id));
     return { ok: true, settings: normalize({ ...raw, lookups: cur.lookups, db, packs }), dropped };
   }

@@ -226,6 +226,30 @@ test('the index keeps its newest 5,000 keys per map', () => {
   assert.equal(index.copy.has('f5000'), true);
 });
 
+test('the index caps each map at 5,000 entries, inner ones included: the least recently touched key goes', () => {
+  const index = createIndex();
+  const offence = (author, tweet) => observe(index, { kind: 'offence', key: tweet, author, rule: 'bm:copy', t: NOW });
+  offence('a', '1');
+  for (let i = 0; i < 4999; i += 1) offence('b', `${100 + i}`);
+  assert.equal(index.n.offence, 5000);
+  offence('a', '2'); // a moves to the newest end, so b is the oldest
+  assert.deepEqual([...index.offence.keys()], ['a']);
+  assert.equal(index.n.offence, 2);
+  for (let i = 0; i < 5001; i += 1) offence('c', `${i}`); // one key over the cap on its own goes too
+  assert.equal(index.offence.size, 0);
+  assert.equal(index.n.offence, 0);
+});
+
+test('everywhere: a conversation past 24 h leaves the index at the Author\'s next sighting', () => {
+  const index = createIndex();
+  const conv = (key, t) => observe(index, { kind: 'conv', key, author: '1', t });
+  conv('c1', NOW - 25 * HOUR);
+  conv('c2', NOW - 24 * HOUR);
+  conv('c3', NOW);
+  assert.deepEqual([...index.conv.get('1').keys()], ['c2', 'c3']);
+  assert.equal(index.n.conv, 2);
+});
+
 test('merge: counts replace, zero and null drop the key', () => {
   const flags = emptyFlags();
   flags.copy.a = 3;
