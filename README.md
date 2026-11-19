@@ -59,13 +59,20 @@ Everything stays in your browser: settings and the country cache in extension st
 
 ## Install
 
-Papieren is a Manifest V3 extension, developed and used in Brave, and it should work in any Chromium browser.
+Papieren is a Manifest V3 extension, developed and used in Brave, and it should work in any Chromium browser. From 3.1.0 it also runs in Firefox 143 or later, on the desktop and on Android.
+
+### Brave, Chrome and other Chromium browsers
 
 1. Download `papieren-<version>.zip` from the Releases page, or build it yourself with `npm run pack` (it lands in `dist/`).
 2. Unzip it into a folder you will keep.
 3. Open `brave://extensions` (or `chrome://extensions`), switch on **Developer mode**, click **Load unpacked** and choose the folder.
 
-Firefox, Android included, is a possible future port, not a promise.
+### Firefox
+
+Firefox only installs signed add-ons, so download `papieren-<version>.xpi` from the Releases page: it is signed by Mozilla but not listed on addons.mozilla.org.
+
+- **Desktop**: open `about:addons`, click the gear icon, choose **Install Add-on From File** and pick the file.
+- **Android**: the X app runs no extensions, so use x.com in Firefox. In Firefox's Settings, open **About Firefox** and tap the logo five times to unlock the debug menu, then go back to Settings, choose **Install extension from file** and pick the file.
 
 ## Under the hood
 
