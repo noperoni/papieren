@@ -135,7 +135,8 @@ test('deleted rows stop hiding in an open tab without F5: Delete all, then a swe
   const home = await x.open('/home');
   await hidden(home, '51', /recycled media/);
   await hidden(home, '52');
-  await until(async () => (await memoryRows(b)).length === 3, 'three media rows', FLUSH + 4000);
+  // Media rows only: the two hides add offence rows, in this flush or the next.
+  await until(async () => (await memoryRows(b)).filter((r) => r.kind === 'media').length === 3, 'three media rows', FLUSH + 4000);
   const p = await b.popup();
   await p.evaluate(() => chrome.runtime.sendMessage({ type: 'db-clear', kind: 'memory' }));
   await shown(home, '51');
