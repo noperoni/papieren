@@ -38,6 +38,12 @@ test('every file the manifest names exists', () => {
   }
 });
 
+test('Firefox runs the same worker as a module background script, and collects no data', () => {
+  assert.deepEqual(manifest.background.scripts, [manifest.background.service_worker]);
+  assert.equal(manifest.background.type, 'module');
+  assert.deepEqual(manifest.browser_specific_settings.gecko.data_collection_permissions, { required: ['none'] });
+});
+
 test('every script the editor tab loads exists, the shared libs before packs.js', () => {
   const html = fs.readFileSync(path.join(root, 'popup', 'packs.html'), 'utf8');
   const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);

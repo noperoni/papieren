@@ -2,8 +2,10 @@
 // page rules that hold for both. Shared-lib pattern, see rules.js.
 (() => {
   const HANDLE = '[A-Za-z0-9_]{1,15}';
-  const PERMALINK = new RegExp(`^(?:https://(?:x|twitter)\\.com)?/(${HANDLE})/status/(\\d+)(?:[/?#]|$)`);
-  const PROFILE = new RegExp(`^(?:https://(?:x|twitter)\\.com)?/(${HANDLE})/?$`);
+  // Mobile x.com (Firefox for Android) writes absolute m.x.com links.
+  const ORIGIN = '(?:https://(?:(?:m|mobile)\\.)?(?:x|twitter)\\.com)?';
+  const PERMALINK = new RegExp(`^${ORIGIN}/(${HANDLE})/status/(\\d+)(?:[/?#]|$)`);
+  const PROFILE = new RegExp(`^${ORIGIN}/(${HANDLE})/?$`);
   const FILTERED = [/^\/home$/, /^\/[^/]+\/status\/\d+/, /^\/search/];
   const CELL = '[data-testid="cellInnerDiv"]:has(article)';
 

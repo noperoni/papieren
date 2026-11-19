@@ -22,9 +22,15 @@ test('permalinks: relative and absolute, extra segments, query strings', () => {
   assert.deepEqual(parsePermalink('/joe/status/789?s=20'), { handle: 'joe', tweetId: '789' });
 });
 
+test('permalinks: mobile hosts, as Firefox for Android renders them', () => {
+  assert.deepEqual(parsePermalink('https://m.x.com/Ivan/status/456'), { handle: 'Ivan', tweetId: '456' });
+  assert.deepEqual(parsePermalink('https://mobile.twitter.com/joe/status/789?s=20'), { handle: 'joe', tweetId: '789' });
+});
+
 test('permalinks: anything else is null (Req 7.5 leaves the post visible)', () => {
   for (const href of [undefined, null, '', '/home', '/ivan', '/ivan/status/', '/ivan/status/12a',
-    '/ivan/status/123abc', 'https://evil.com/ivan/status/1', '/a_handle_far_too_long/status/1']) {
+    '/ivan/status/123abc', 'https://evil.com/ivan/status/1', '/a_handle_far_too_long/status/1',
+    'https://evil.m.x.com/ivan/status/1', 'https://m.x.com.evil.com/ivan/status/1', 'https://www.x.com/ivan/status/1']) {
     assert.equal(parsePermalink(href), null, String(href));
   }
 });
