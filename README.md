@@ -6,9 +6,9 @@ Papieren is my attempt to turn the volume down. It is a small browser extension 
 
 ## A word before you install
 
-I am not a developer. I am a sysadmin who spends more time in project and team management than in an editor, and Papieren was built with an AI coding assistant doing most of the typing while I did the deciding, the testing and the arguing. It has a lot of tests and I have been careful, but it is not the work of a seasoned extension developer, and the code will show it in places. Issues and suggestions are very welcome.
+I am not a developer. I am a sysadmin who spends more time in project and team management than in an editor, and Papieren was built with an AI coding assistant doing most of the typing while I did the deciding, the testing and the arguing. It has a lot of tests and I have been careful, but it is not the work of a seasoned extension developer, and the code will show it in places.
 
-There are other extensions that filter X by country, by keyword or by behaviour, several of them older and more polished than this one, each with features this one lacks. They deserve a look. I made Papieren because I wanted to build my own and understand every piece of it, not because the others fall short.
+There are other extensions that filter X by country, by keyword or by behaviour, several of them older and more polished than this one, each with features this one lacks. They deserve a look. I made Papieren because I wanted to build my own and try to understand how to make one, not because the others fall short.
 
 ## X's rules, and the two ways Papieren learns a country
 
@@ -59,13 +59,20 @@ Everything stays in your browser: settings and the country cache in extension st
 
 ## Install
 
-Papieren is a Manifest V3 extension, developed and used in Brave, and it should work in any Chromium browser.
+Papieren is a Manifest V3 extension, developed and used in Brave, and it should work in any Chromium browser. From 3.1.0 it also runs in Firefox 143 or later, on the desktop and on Android.
+
+### Brave, Chrome and other Chromium browsers
 
 1. Download `papieren-<version>.zip` from the Releases page, or build it yourself with `npm run pack` (it lands in `dist/`).
 2. Unzip it into a folder you will keep.
 3. Open `brave://extensions` (or `chrome://extensions`), switch on **Developer mode**, click **Load unpacked** and choose the folder.
 
-Firefox, Android included, is a possible future port, not a promise.
+### Firefox
+
+Firefox only installs signed add-ons, so download `papieren-<version>.xpi` from the Releases page: it is signed by Mozilla but not listed on addons.mozilla.org.
+
+- **Desktop**: open `about:addons`, click the gear icon, choose **Install Add-on From File** and pick the file.
+- **Android**: the X app runs no extensions, so use x.com in Firefox. In Firefox's Settings, open **About Firefox** and tap the logo five times to unlock the debug menu, then go back to Settings, choose **Install extension from file** and pick the file.
 
 ## Under the hood
 

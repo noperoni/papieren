@@ -1,13 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Papieren",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Hides x.com posts by the author's account country. Hide only: it never blocks, mutes or reports.",
   "permissions": ["storage"],
   "host_permissions": ["https://x.com/*", "https://api.x.com/*"],
   "background": {
     "service_worker": "src/background.js",
+    "scripts": ["src/background.js"],
     "type": "module"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "papieren@noperoni",
+      "strict_min_version": "143.0",
+      "data_collection_permissions": { "required": ["none"] }
+    },
+    "gecko_android": {
+      "strict_min_version": "143.0"
+    }
   },
   "content_scripts": [
     {
