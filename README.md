@@ -6,9 +6,9 @@ Papieren is my attempt to turn the volume down. It is a small browser extension 
 
 ## A word before you install
 
-I am not a developer. I am a sysadmin who spends more time in project and team management than in an editor, and Papieren was built with an AI coding assistant doing most of the typing while I did the deciding, the testing and the arguing. It has a lot of tests and I have been careful, but it is not the work of a seasoned extension developer, and the code will show it in places. Issues and suggestions are very welcome.
+I am not a developer. I am a sysadmin who spends more time in project and team management than in an editor, and Papieren was built with an AI coding assistant doing most of the typing while I did the deciding, the testing and the arguing. It has a lot of tests and I have been careful, but it is not the work of a seasoned extension developer, and the code will show it in places.
 
-There are other extensions that filter X by country, by keyword or by behaviour, several of them older and more polished than this one, each with features this one lacks. They deserve a look. I made Papieren because I wanted to build my own and understand every piece of it, not because the others fall short.
+There are other extensions that filter X by country, by keyword or by behaviour, several of them older and more polished than this one, each with features this one lacks. They deserve a look. I made Papieren because I wanted to build my own and try to understand how to make one, not because the others fall short.
 
 ## X's rules, and the two ways Papieren learns a country
 
